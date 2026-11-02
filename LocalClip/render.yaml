@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: lokalclipps
+    runtime: docker
+    region: frankfurt
+    plan: 1c-2g
+    healthCheckPath: /health
+    envVars:
+      - key: LOCALCLIP_DATA_DIR
+        value: /var/data
+      - key: LOCALCLIP_USERNAME
+        value: alex
+      - key: LOCALCLIP_PASSWORD
+        generateValue: true
+    disk:
+      name: lokalclipps-data
+      mountPath: /var/data
+      sizeGB: 10

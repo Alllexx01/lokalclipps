@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LokalClipps</title>
+  <link rel="icon" href="/static/lokalclipps-logo.png" type="image/png">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    :root{--accent:#f21624;--accent2:#ff4b42;--good:#38d39f}
+    body{background:radial-gradient(circle at 50% -20%,#3a1014 0,transparent 38%),#08090d}
+    .brand .logo{width:54px;height:54px;object-fit:cover;border-radius:50%;background:#050505;box-shadow:0 0 0 1px #ffffff55,0 0 20px #ff1f2f55}
+    .brand span{font-size:22px}.eyebrow{color:#ff6971}.hero h1 span{background:linear-gradient(90deg,#fff,#ff3442);color:transparent;background-clip:text}.primary{background:linear-gradient(90deg,#e5091a,#ff4d42)}
+    .url-box:focus-within,.focus-box input:focus{border-color:#ff3442;box-shadow:0 0 0 3px #ff344222}.url-icon{color:#ff5963}.local-pill{border-color:#683038;background:#2b1115;color:#ff9fa5}
+    .top-actions{display:flex;align-items:center;gap:12px}.retention-control{display:flex;align-items:center;gap:7px;color:#b7bac4;font-size:12px;background:#111319;border:1px solid #292d37;border-radius:11px;padding:6px 8px}.retention-control input{width:42px;height:28px;border:0;border-radius:7px;background:#242731;color:#fff;text-align:center}.retention-control button{height:28px;border:0;border-radius:7px;background:#e31a27;color:#fff;padding:0 9px;font-weight:800;cursor:pointer}.save-state{color:#6de1b4;font-size:11px;min-width:58px}
+    .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 22px}.step-card{display:flex;gap:12px;align-items:center;padding:15px 17px;background:#111319;border:1px solid #292d37;border-radius:14px;color:#d8dae1}.step-number{width:31px;height:31px;flex:none;border-radius:9px;background:#361419;color:#ff6c75;display:grid;place-items:center;font-weight:900}.step-card strong{display:block;font-size:13px}.step-card small{display:block;color:#7d818e;margin-top:3px}
+    .recent-panel{margin-bottom:22px;padding:22px;background:#101218;border:1px solid #292d37;border-radius:20px}.section-head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:14px}.section-head h2{margin:0;font-size:24px}.section-head p{margin:4px 0 0;color:#858996;font-size:13px}.recent-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.recent-card{padding:15px;background:#171a22;border:1px solid #2d313c;border-radius:14px}.recent-card h3{font-size:14px;margin:0 0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.recent-meta{display:flex;justify-content:space-between;color:#858996;font-size:11px;margin-bottom:12px}.recent-open{width:100%;height:36px;border:1px solid #713139;border-radius:9px;background:#2b1115;color:#ffadb2;font-weight:800;cursor:pointer}.recent-empty{color:#777b87;font-size:13px;padding:8px 0}
+    .source-divider{display:flex;align-items:center;gap:14px;margin:20px 0;color:#777b87;font-size:12px;font-weight:800;letter-spacing:.12em}
+    .source-divider::before,.source-divider::after{content:"";height:1px;flex:1;background:#292d37}
+    .url-box{display:flex;gap:10px;align-items:center;background:#0d0f14;border:1px solid #292d37;border-radius:14px;padding:10px 14px;transition:.2s}
+    .url-box:focus-within{border-color:#8b5cf6;box-shadow:0 0 0 3px #8b5cf622}
+    .url-icon{color:#a78bfa;font-size:22px}
+    .url-box input{border:0;outline:0;background:transparent;color:#fff;font-size:15px;width:100%;height:34px}
+    .url-box input::placeholder{color:#666b78}
+    .source-note{display:block;color:#777b87;margin:9px 4px 0;font-size:12px}
+    .auth-options{margin-top:12px;border:1px solid #2b2f39;border-radius:12px;background:#0d0f14;color:#aeb2bd}.auth-options summary{cursor:pointer;padding:12px 14px;font-size:13px;font-weight:800;color:#d8dae1}.auth-body{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 14px 14px}.auth-body label{color:#8d919d;font-size:12px;font-weight:700}.auth-body select,.cookie-file{display:block;width:100%;height:40px;margin-top:6px;border:1px solid #292d37;border-radius:9px;background:#171a22;color:#fff;padding:8px}.auth-hint{grid-column:1/-1;color:#737783;font-size:11px;line-height:1.45;margin:0}.auth-hint strong{color:#ff8c93}
+    .focus-box{display:block;margin-top:18px;color:#9b9fac;font-size:12px;font-weight:700}
+    .focus-box input{width:100%;height:48px;margin-top:7px;border:1px solid #292d37;border-radius:12px;background:#0d0f14;color:#fff;padding:0 14px;outline:0}
+    .focus-box input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px #8b5cf622}
+    .caption-panel{display:grid;grid-template-columns:190px 1fr;gap:20px;align-items:center;margin:20px 0;padding:18px;border:1px solid #292d37;border-radius:16px;background:#0d0f14}
+    .caption-preview{aspect-ratio:9/12;border-radius:12px;background:linear-gradient(145deg,#2c3040,#08090d);display:flex;align-items:flex-end;justify-content:center;padding:18px 8px;overflow:hidden}
+    .caption-preview span{text-align:center;color:#fff;font-size:18px;font-weight:900;text-transform:uppercase;line-height:1.05;text-shadow:0 2px 0 #000,2px 0 0 #000,-2px 0 0 #000}
+    .caption-preview em{color:#ffd400;font-style:normal}
+    .caption-controls h3{margin:0 0 14px;font-size:16px}.caption-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .caption-grid label{color:#9b9fac;font-size:12px;font-weight:700}.caption-grid select,.caption-grid input[type=number]{width:100%;height:42px;margin-top:6px;border:1px solid #292d37;border-radius:10px;background:#151821;color:#fff;padding:0 10px}
+    .color-control{display:flex!important;align-items:center;justify-content:space-between;height:42px;margin-top:6px;padding:0 10px;border:1px solid #292d37;border-radius:10px;background:#151821}.color-control input{width:30px;height:28px;border:0;background:none;padding:0}
+    .clip-reasons{color:#9b9fac;font-size:12px;line-height:1.45;margin:0 0 14px}
+    .edit-captions{width:100%;margin-bottom:10px;padding:11px;border:1px solid #4c3f72;border-radius:10px;background:#211a36;color:#d8ccff;font-weight:800;cursor:pointer}
+    .tiktok-top,.post-tiktok{border:1px solid #2c6c70;background:linear-gradient(135deg,#102a2d,#211020);color:#fff;font-weight:900;cursor:pointer}.tiktok-top{height:40px;padding:0 14px;border-radius:11px}.post-tiktok{width:100%;margin-bottom:10px;padding:11px;border-radius:10px}.share-clip{width:100%;margin-bottom:10px;padding:12px;border:1px solid #3e597d;border-radius:10px;background:linear-gradient(135deg,#172b46,#261a38);color:#fff;font-weight:900;cursor:pointer}.share-clip:disabled{opacity:.65;cursor:wait}.tiktok-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#737783}.tiktok-dot.online{background:#2ee6a6;box-shadow:0 0 9px #2ee6a6}
+    .caption-dialog{width:min(760px,94vw);border:1px solid #353946;border-radius:20px;background:#111319;color:#fff;padding:0;box-shadow:0 30px 100px #000}.caption-dialog::backdrop{background:#05060acc;backdrop-filter:blur(6px)}
+    .dialog-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #292d37}.dialog-head h2{margin:0;font-size:20px}.dialog-close{border:0;background:#242731;color:#fff;width:34px;height:34px;border-radius:9px;cursor:pointer;font-size:18px}
+    .dialog-body{padding:20px}.caption-toggle{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:#ddd;font-weight:700}.caption-toggle input{width:19px;height:19px;accent-color:#8b5cf6}
+    .render-status{min-height:20px;color:#a78bfa;font-size:13px;margin:10px 0 0}.dialog-actions{display:flex;gap:10px;padding:0 20px 20px}.dialog-actions button{height:46px}.dialog-actions .primary{flex:1}.dialog-actions .secondary{min-width:120px}
+    .tiktok-form{display:grid;gap:14px}.tiktok-form label{display:grid;gap:6px;color:#aeb2bd;font-size:12px;font-weight:800}.tiktok-form input,.tiktok-form textarea,.tiktok-form select{width:100%;box-sizing:border-box;border:1px solid #303440;border-radius:10px;background:#171a22;color:#fff;padding:11px}.tiktok-form textarea{min-height:120px;resize:vertical}.tiktok-note{padding:12px;border:1px solid #654f22;border-radius:10px;background:#2a2110;color:#e8d497;font-size:12px;line-height:1.45}.tiktok-status{color:#9ea3af;font-size:13px;line-height:1.5}.hashtag-packages{display:flex;flex-wrap:wrap;gap:8px}.hashtag-package{border:1px solid #345e62;border-radius:999px;background:#12272a;color:#bffaff;padding:8px 11px;cursor:pointer}.post-options{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.post-options label{display:flex;align-items:center;gap:7px;padding:10px;border:1px solid #303440;border-radius:9px}.tiktok-connected{color:#67edbd;font-weight:800}
+    @media(max-width:700px){.caption-panel{grid-template-columns:1fr}.caption-preview{max-width:180px;margin:auto}.caption-grid{grid-template-columns:1fr 1fr}.steps{grid-template-columns:1fr}.top-actions{gap:5px}.retention-control span:first-child,.save-state{display:none}.brand span{font-size:18px}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><img class="logo" src="/static/lokalclipps-logo.png" alt="LokalClipps"><span>LokalClipps</span></a>
+    <div class="top-actions">
+      <label class="retention-control"><span>Clips behalten</span><input id="retentionDays" type="number" min="1" max="90" value="3"><span>Tage</span><button id="saveRetention" type="button">Speichern</button></label>
+      <span class="save-state" id="retentionState"></span>
+      <button class="tiktok-top" id="tiktokButton" type="button"><span class="tiktok-dot" id="tiktokDot"></span>TikTok</button>
+      <span class="local-pill">100 % lokal</span>
+    </div>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">AUTOMATISCHES VIDEO-CLIPPING</p>
+      <h1>Aus langen Videos werden<br><span>starke Short-Clips.</span></h1>
+      <p class="subtitle">Video rein, starke Momente raus. Lokal verarbeitet, einfach nachbearbeitet und bereit zum Posten.</p>
+    </section>
+
+    <section class="steps" aria-label="So funktioniert LokalClipps">
+      <div class="step-card"><span class="step-number">1</span><div><strong>Video hinzufügen</strong><small>Datei oder öffentlicher Link</small></div></div>
+      <div class="step-card"><span class="step-number">2</span><div><strong>Highlights finden</strong><small>Automatisch nach Thema und Hook</small></div></div>
+      <div class="step-card"><span class="step-number">3</span><div><strong>Untertitel gestalten</strong><small>Nachträglich pro Clip anpassen</small></div></div>
+    </section>
+
+    <section class="recent-panel hidden" id="recentPanel">
+      <div class="section-head"><div><h2>Letzte Projekte</h2><p>Deine fertigen Clips bleiben lokal gespeichert.</p></div><span class="local-pill" id="retentionLabel">3 Tage</span></div>
+      <div class="recent-grid" id="recentGrid"></div>
+    </section>
+
+    <section class="panel" id="setupPanel">
+      <form id="clipForm">
+        <label class="dropzone" id="dropzone">
+          <input id="video" name="video" type="file" accept="video/*">
+          <span class="upload-icon">↑</span>
+          <strong id="fileLabel">Video hier ablegen oder auswählen</strong>
+          <small>MP4, MOV, MKV, WEBM und weitere Formate</small>
+        </label>
+
+        <div class="source-divider">ODER LINK EINFÜGEN</div>
+        <label class="url-box">
+          <span class="url-icon">↗</span>
+          <input id="videoUrl" name="url" type="url" inputmode="url" placeholder="YouTube-, Twitch-, TikTok- oder andere Video-URL">
+        </label>
+        <small class="source-note">Öffentlich erreichbare Videos werden zuerst lokal heruntergeladen. Playlists werden nicht übernommen.</small>
+        <details class="auth-options">
+          <summary>YouTube verlangt eine Anmeldung oder meldet eine Bot-Prüfung?</summary>
+          <div class="auth-body">
+            <label>Vorhandenen Browser-Login verwenden
+              <select name="cookie_browser" id="cookieBrowser"><option value="none">Keine Anmeldung</option><option value="firefox">Firefox – empfohlen</option><option value="chrome">Chrome</option><option value="edge">Edge</option></select>
+            </label>
+            <label>Oder cookies.txt auswählen
+              <input class="cookie-file" name="cookies_file" id="cookiesFile" type="file" accept=".txt,text/plain">
+            </label>
+            <p class="auth-hint">Noch keine Datei? <a class="cookie-help-link" href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc?hl=de" target="_blank" rel="noopener noreferrer">Empfohlene Chrome-Erweiterung öffnen</a>. Danach auf YouTube im Erweiterungsmenü im <strong>Netscape-Format</strong> exportieren.</p>
+            <p class="auth-hint"><strong>Bleibt lokal:</strong> Die Datei wird nur für den Download verwendet und danach sofort gelöscht. Chrome/Edge können unter Windows durch die Cookie-Verschlüsselung scheitern; Firefox ist zuverlässiger.</p>
+          </div>
+        </details>
+
+        <label class="focus-box">Wonach soll die Clipsuche suchen? <span style="font-weight:400">(optional)</span>
+          <input name="focus" type="text" maxlength="240" placeholder="z. B. lustige Momente, Polizei, Streit, überraschende Aussagen">
+        </label>
+
+        <div class="settings">
+          <label>Anzahl Clips<select name="count"><option>3</option><option selected>5</option><option>8</option><option>10</option></select></label>
+          <label>Mindestlänge<input name="min_seconds" type="number" min="15" max="90" value="25"><span>Sek.</span></label>
+          <label>Maximallänge<input name="max_seconds" type="number" min="20" max="120" value="55"><span>Sek.</span></label>
+          <label>Sprache<select name="language"><option value="auto">Automatisch</option><option value="de">Deutsch</option><option value="en">Englisch</option></select></label>
+          <label>Qualität<select name="model"><option value="tiny">Schnell</option><option value="base">Ausgewogen</option><option value="small" selected>Genau</option></select></label>
+        </div>
+
+        <button class="primary" type="submit">Clips erstellen <span>→</span></button>
+      </form>
+    </section>
+
+    <section class="panel progress-panel hidden" id="progressPanel">
+      <div class="spinner"></div>
+      <h2 id="progressTitle">Video wird verarbeitet</h2>
+      <p id="progressMessage">Wird vorbereitet …</p>
+      <div class="progress-track"><div id="progressBar"></div></div>
+      <strong id="progressPercent">0 %</strong>
+      <small>Die Verarbeitung läuft lokal. Dieses Fenster bitte geöffnet lassen.</small>
+      <div class="progress-help" id="progressHelp">
+        <a class="secondary" href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc?hl=de" target="_blank" rel="noopener noreferrer">Cookie-Erweiterung öffnen</a>
+        <button class="secondary" id="retryJob" type="button">Neues Video versuchen</button>
+      </div>
+    </section>
+
+    <section class="results hidden" id="resultsPanel">
+      <div class="results-heading"><div><p class="eyebrow">FERTIG</p><h2>Deine besten Clips</h2></div><button id="newJob" class="secondary">Neues Video</button></div>
+      <div class="clip-grid" id="clipGrid"></div>
+    </section>
+  </main>
+  <dialog class="caption-dialog" id="captionDialog">
+    <div class="dialog-head"><h2>Untertitel bearbeiten</h2><button class="dialog-close" id="closeCaptionDialog" aria-label="Schließen">×</button></div>
+    <div class="dialog-body">
+      <label class="caption-toggle"><input id="captionEnabled" type="checkbox" checked> Untertitel in diesen Clip einfügen</label>
+      <section class="caption-panel" style="margin:0">
+        <div class="caption-preview" id="captionPreview"><span>DAS IST <em>DEIN</em><br>BESTER MOMENT</span></div>
+        <div class="caption-controls">
+          <h3>Darstellung</h3>
+          <div class="caption-grid">
+            <label>Stil<select id="captionStyle"><option value="karaoke">Karaoke</option><option value="bold">Fett</option><option value="boxed">Box</option><option value="minimal">Minimal</option></select></label>
+            <label>Position<select id="captionPosition"><option value="bottom">Unten</option><option value="middle">Mitte</option><option value="top">Oben</option></select></label>
+            <label>Größe<input id="captionSize" type="number" min="44" max="100" value="72"></label>
+            <label>Textfarbe<span class="color-control"><span>Text</span><input id="captionColor" type="color" value="#ffffff"></span></label>
+            <label>Highlight<span class="color-control"><span>Aktives Wort</span><input id="highlightColor" type="color" value="#ffd400"></span></label>
+          </div>
+        </div>
+      </section>
+      <p class="render-status" id="renderStatus"></p>
+    </div>
+    <div class="dialog-actions"><button class="secondary" id="cancelCaptionEdit">Abbrechen</button><button class="primary" id="renderCaptionButton">Clip mit Untertiteln rendern</button></div>
+  </dialog>
+  <dialog class="caption-dialog" id="tiktokSettingsDialog">
+    <div class="dialog-head"><h2>TikTok verbinden</h2><button class="dialog-close" id="closeTikTokSettings" aria-label="Schließen">×</button></div>
+    <div class="dialog-body tiktok-form">
+      <p class="tiktok-status" id="tiktokSetupStatus">Status wird geladen …</p>
+      <label>Client Key<input id="tiktokClientKey" autocomplete="off" placeholder="Aus TikTok for Developers"></label>
+      <label>Client Secret<input id="tiktokClientSecret" type="password" autocomplete="new-password" placeholder="Wird Windows-verschlüsselt gespeichert"></label>
+      <label>Redirect-URI<input id="tiktokRedirectUri" readonly value="http://127.0.0.1:8765/auth/tiktok/callback"></label>
+      <p class="tiktok-note">In TikTok for Developers eine <strong>Desktop-App</strong> anlegen, Login Kit und Content Posting API hinzufügen, diese Redirect-URI registrieren und <strong>video.publish</strong> beantragen. Ungeprüfte Apps dürfen nur private Testposts veröffentlichen.</p>
+    </div>
+    <div class="dialog-actions"><button class="secondary" id="tiktokLogout" type="button">Abmelden</button><button class="secondary" id="saveTikTokConfig" type="button">Zugang speichern</button><button class="primary" id="loginTikTok" type="button">Mit TikTok anmelden</button></div>
+  </dialog>
+  <dialog class="caption-dialog" id="tiktokPostDialog">
+    <div class="dialog-head"><h2>Auf TikTok posten</h2><button class="dialog-close" id="closeTikTokPost" aria-label="Schließen">×</button></div>
+    <div class="dialog-body tiktok-form">
+      <label>Caption und Hashtags<textarea id="tiktokCaption" maxlength="2200"></textarea></label>
+      <div><p class="tiktok-status">Vorgeschlagene Hashtag-Pakete – anklicken zum Einfügen:</p><div class="hashtag-packages" id="hashtagPackages"></div></div>
+      <label>Sichtbarkeit<select id="tiktokPrivacy"></select></label>
+      <div class="post-options"><label><input id="tiktokComments" type="checkbox" checked> Kommentare</label><label><input id="tiktokDuet" type="checkbox"> Duett</label><label><input id="tiktokStitch" type="checkbox"> Stitch</label></div>
+      <p class="tiktok-note">Mit „Jetzt posten“ wird der ausgewählte Clip an TikTok übertragen und veröffentlicht. Sichtbarkeit und Optionen werden vorher direkt von deinem TikTok-Konto abgefragt.</p>
+      <p class="render-status" id="tiktokPostStatus"></p>
+    </div>
+    <div class="dialog-actions"><button class="secondary" id="cancelTikTokPost" type="button">Abbrechen</button><button class="primary" id="publishTikTok" type="button">Jetzt posten</button></div>
+  </dialog>
+  <footer>LokalClipps · Deine Videos verlassen deinen PC nicht.</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

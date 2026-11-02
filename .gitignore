@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+LocalClip/data/*
+!LocalClip/data/.gitkeep
+LocalClip/settings.json
+LocalClip/tiktok_config.json
+LocalClip/tiktok_token.dat
+
