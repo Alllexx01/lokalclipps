@@ -7,7 +7,7 @@ services:
       LOCALCLIP_USERNAME: ${LOCALCLIP_USERNAME}
       LOCALCLIP_PASSWORD: ${LOCALCLIP_PASSWORD}
       LOCALCLIP_DOMAIN: ${LOCALCLIP_DOMAIN}
-      LOCALCLIP_PC_HELPER: "1"
+      LOCALCLIP_PC_HELPER: "0"
     volumes:
       - lokalclipps_data:/var/data
       - model_cache:/root/.cache/huggingface

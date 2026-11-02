@@ -134,10 +134,37 @@ def test_caption_suggestions_endpoint(client_and_job):
     assert client.get("/api/jobs/ffffffffffff/clips/1/captions").status_code == 404
 
 
-def test_mobile_page_does_not_request_youtube_cookies(client_and_job):
+def test_mobile_page_accepts_one_time_youtube_cookie_file(client_and_job):
     client, _, _ = client_and_job
     page = client.get("/").text
-    assert "cookies_file" not in page
+    assert "cookies_file" in page
     assert "cookieBrowser" not in page
-    assert "Cookie-Erweiterung" not in page
-    assert "ohne Cookie-Datei" in page
+    assert "Nur einmalig" in page
+    assert "direkt danach" in page
+
+
+def test_cookie_file_is_deleted_after_failed_download(client_and_job, monkeypatch):
+    client, _, _ = client_and_job
+    import app as app_module
+    monkeypatch.setattr(app_module, "validate_public_video_url", lambda value: value)
+    seen = {}
+
+    def fail_download(*args, **kwargs):
+        cookie_file = kwargs["cookie_file"]
+        seen["content"] = cookie_file.read_text()
+        seen["path"] = cookie_file
+        raise RuntimeError("Testdownload fehlgeschlagen")
+
+    monkeypatch.setattr(app_module, "download_video", fail_download)
+    response = client.post(
+        "/api/jobs",
+        data={"url": "https://www.youtube.com/watch?v=abcDEF12345"},
+        files={"cookies_file": ("cookies.txt", b"# Netscape HTTP Cookie File\n", "text/plain")},
+    )
+    job_id = response.json()["job_id"]
+    for _ in range(100):
+        if app_module.JOBS[job_id]["status"] == "error":
+            break
+        time.sleep(0.02)
+    assert seen["content"].startswith("# Netscape")
+    assert not seen["path"].exists()

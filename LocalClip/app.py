@@ -75,8 +75,11 @@ def load_jobs() -> None:
                 continue
             if job.get("status") in {"queued", "running"}:
                 job.update(status="error", message="Die Verarbeitung wurde durch einen Neustart unterbrochen.")
-            elif job.get("status") == "helper_downloading":
-                job.update(status="waiting_for_pc", message="Wartet auf den Download-PC")
+            elif job.get("status") in {"waiting_for_pc", "helper_downloading"}:
+                if PC_HELPER_ENABLED:
+                    job.update(status="waiting_for_pc", message="Wartet auf den Download-PC")
+                else:
+                    job.update(status="error", message="Der PC-Download wurde beendet.", error="Der PC-Download wurde beendet.")
             JOBS[job_id] = job
             save_job(job_id)
         except (OSError, KeyError, TypeError, json.JSONDecodeError):
@@ -117,7 +120,7 @@ def update_job(job_id: str, **values) -> None:
         save_job(job_id)
 
 
-def start_processing(job_id: str, source_video: Path | None = None) -> None:
+def start_processing(job_id: str, source_video: Path | None = None, cookie_file: Path | None = None) -> None:
     """Start the CPU-heavy processing queue after a local file is available."""
     def run_job() -> None:
         try:
@@ -125,11 +128,16 @@ def start_processing(job_id: str, source_video: Path | None = None) -> None:
             job = JOBS[job_id]
             video = source_video
             if video is None:
-                video = download_video(
-                    str(job.get("source_url", "")),
-                    DATA / job_id,
-                    lambda percent, message: update_job(job_id, progress=percent, message=message),
-                )
+                try:
+                    video = download_video(
+                        str(job.get("source_url", "")),
+                        DATA / job_id,
+                        lambda percent, message: update_job(job_id, progress=percent, message=message),
+                        cookie_file=cookie_file,
+                    )
+                finally:
+                    if cookie_file:
+                        cookie_file.unlink(missing_ok=True)
             results, analysis = process_video(
                 video=video,
                 output_dir=DATA / job_id,
@@ -238,6 +246,7 @@ async def create_job(request):
     cleanup_expired_jobs()
     form = await request.form()
     upload = form.get("video")
+    cookie_upload = form.get("cookies_file")
     video_url = str(form.get("url", "")).strip()
     has_upload = bool(upload and getattr(upload, "filename", ""))
     if not has_upload and not video_url:
@@ -252,11 +261,20 @@ async def create_job(request):
     job_dir = DATA / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     video = None
+    cookie_file = None
     if has_upload:
         suffix = Path(upload.filename).suffix.lower() or ".mp4"
         video = job_dir / f"source{suffix}"
         with video.open("wb") as target:
             shutil.copyfileobj(upload.file, target, length=1024 * 1024)
+    elif cookie_upload and getattr(cookie_upload, "filename", ""):
+        cookie_file = job_dir / "youtube_cookies.txt"
+        with cookie_file.open("wb") as target:
+            shutil.copyfileobj(cookie_upload.file, target, length=256 * 1024)
+        if cookie_file.stat().st_size > 5 * 1024 * 1024:
+            cookie_file.unlink(missing_ok=True)
+            shutil.rmtree(job_dir, ignore_errors=True)
+            return JSONResponse({"error": "Die cookies.txt-Datei ist ungewöhnlich groß."}, status_code=400)
 
     try:
         settings = {
@@ -278,6 +296,8 @@ async def create_job(request):
             "zoom": str(form.get("zoom", "off")),
         }
     except ValueError:
+        if cookie_file:
+            cookie_file.unlink(missing_ok=True)
         shutil.rmtree(job_dir, ignore_errors=True)
         return JSONResponse({"error": "Ungültige Einstellungen."}, status_code=400)
     if settings["max_seconds"] <= settings["min_seconds"]:
@@ -318,7 +338,7 @@ async def create_job(request):
     if video is None and PC_HELPER_ENABLED and video_id_from_url(video_url):
         update_job(job_id, status="waiting_for_pc", message="Wartet auf den Download-PC")
     else:
-        start_processing(job_id, video)
+        start_processing(job_id, video, cookie_file)
     return JSONResponse({"job_id": job_id})
 
 

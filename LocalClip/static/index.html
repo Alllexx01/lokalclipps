@@ -24,6 +24,7 @@
     .url-box input{border:0;outline:0;background:transparent;color:#fff;font-size:15px;width:100%;height:34px}
     .url-box input::placeholder{color:#666b78}
     .source-note{display:block;color:#777b87;margin:9px 4px 0;font-size:12px}
+    .cookie-options{margin-top:12px;border:1px solid #2b2f39;border-radius:12px;background:#0d0f14;color:#aeb2bd}.cookie-options summary{cursor:pointer;padding:12px 14px;font-size:13px;font-weight:800;color:#d8dae1}.cookie-body{padding:0 14px 14px}.cookie-body label{display:block;color:#8d919d;font-size:12px;font-weight:700}.cookie-file{display:block;width:100%;margin-top:7px;border:1px solid #292d37;border-radius:9px;background:#171a22;color:#fff;padding:9px}.cookie-hint{color:#737783;font-size:11px;line-height:1.45;margin:9px 0 0}.cookie-hint strong{color:#ff8c93}
     .focus-box{display:block;margin-top:18px;color:#9b9fac;font-size:12px;font-weight:700}
     .focus-box input{width:100%;height:48px;margin-top:7px;border:1px solid #292d37;border-radius:12px;background:#0d0f14;color:#fff;padding:0 14px;outline:0}
     .focus-box input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px #8b5cf622}
@@ -132,7 +133,16 @@
           <input id="videoUrl" name="url" type="url" inputmode="url" placeholder="YouTube-, Twitch-, TikTok- oder andere Video-URL">
         </label>
         <input id="videoTitle" name="title" type="hidden">
-        <small class="source-note">Öffentliche Links verarbeitet LocalClip automatisch – auch am Handy ohne Cookie-Datei. Falls eine Plattform den Abruf sperrt, kannst du das Video oben direkt auswählen.</small>
+        <small class="source-note">Öffentliche Links werden vom Server geladen. Falls YouTube eine Anmeldung verlangt, füge für diesen Auftrag eine cookies.txt hinzu.</small>
+        <details class="cookie-options">
+          <summary>YouTube-Cookies für diesen Auftrag verwenden</summary>
+          <div class="cookie-body">
+            <label>cookies.txt auswählen
+              <input class="cookie-file" name="cookies_file" id="cookiesFile" type="file" accept=".txt,text/plain">
+            </label>
+            <p class="cookie-hint"><strong>Nur einmalig:</strong> Die Datei wird ausschließlich für diesen Download verwendet und direkt danach auch bei einem Fehler vom Server gelöscht.</p>
+          </div>
+        </details>
 
         <label class="focus-box">Wonach soll die Clipsuche suchen? <span style="font-weight:400">(optional)</span>
           <input name="focus" type="text" maxlength="240" placeholder="z. B. lustige Momente, Polizei, Streit, überraschende Aussagen">

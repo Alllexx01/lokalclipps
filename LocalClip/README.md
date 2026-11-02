@@ -81,23 +81,19 @@ docker compose up -d --build
 
 `render.yaml` ist nur eine frühere, derzeit nicht verwendete Alternative.
 
-## Videoquellen am Handy
+## Videoquellen und Cookies
 
-Der Video-Finder und öffentliche Links arbeiten ohne Benutzer-Cookies. Falls eine
-Plattform den automatischen Abruf blockiert, kann die Videodatei direkt über die
-große Dateiauswahl hochgeladen werden. LocalClip fordert keine YouTube-Sitzungsdatei
-und keine YouTube-Zugangsdaten an. Plattform-Sperren werden nicht umgangen.
+Der Video-Finder arbeitet ohne Benutzer-Cookies. Für den eigentlichen URL-Download
+kann pro Auftrag eine `cookies.txt` hochgeladen werden. Sie wird ausschließlich an
+`yt-dlp` für diesen Download übergeben und anschließend auch im Fehlerfall gelöscht.
+Alternativ kann die Videodatei direkt über die große Dateiauswahl hochgeladen werden.
+Plattform-Sperren werden nicht umgangen.
 
 ### PC-Helfer für YouTube-Links
 
-Auf dem Cloud-Server ist `LOCALCLIP_PC_HELPER=1` aktiv. Ein am Handy gestarteter
-YouTube-Auftrag wartet dadurch auf `pc_helper.py`, statt den Download über die oft
-blockierte Rechenzentrums-IP zu versuchen. `start_pc_helper.bat` startet den Helfer
-unter Windows. Er meldet sich mit `LocalClip/.deploy/login.txt` am bestehenden Server
-an, lädt das Video über den Internetanschluss des PCs und streamt nur die Videodatei
-zurück. Browser-Cookies und Zugangsdaten verlassen den PC nicht. Nach erfolgreicher
-Übertragung wird die temporäre lokale Kopie gelöscht und der Server verarbeitet den
-Auftrag automatisch weiter.
+Der PC-Helfer ist derzeit deaktiviert (`LOCALCLIP_PC_HELPER=0`). Der Code und die
+Desktop-Verknüpfung bleiben als Rückweg erhalten, aber der Helfer läuft nicht und
+startet nicht automatisch mit Windows.
 
 Es dürfen nur eigene Videos oder Inhalte mit entsprechender Erlaubnis verarbeitet
 und veröffentlicht werden.
