@@ -6,4 +6,6 @@ LocalClip/data/*
 LocalClip/settings.json
 LocalClip/tiktok_config.json
 LocalClip/tiktok_token.dat
+LocalClip/.deploy/
+LocalClip/.env
 

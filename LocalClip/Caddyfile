@@ -1,0 +1,3 @@
+{$LOCALCLIP_DOMAIN} {
+    reverse_proxy lokalclipps:10000
+}

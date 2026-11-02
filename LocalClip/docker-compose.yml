@@ -1,0 +1,30 @@
+services:
+  lokalclipps:
+    build: .
+    restart: unless-stopped
+    environment:
+      LOCALCLIP_DATA_DIR: /var/data
+      LOCALCLIP_USERNAME: ${LOCALCLIP_USERNAME}
+      LOCALCLIP_PASSWORD: ${LOCALCLIP_PASSWORD}
+    volumes:
+      - lokalclipps_data:/var/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - lokalclipps
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      LOCALCLIP_DOMAIN: ${LOCALCLIP_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  lokalclipps_data:
+  caddy_data:
+  caddy_config:
