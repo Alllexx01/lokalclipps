@@ -95,8 +95,10 @@ def transcribe(audio: Path, model_name: str, language: str | None) -> tuple[list
         audio_data,
         language=None if language == "auto" else language,
         vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 350, "speech_pad_ms": 180},
         word_timestamps=True,
         beam_size=5,
+        condition_on_previous_text=True,
     )
     words: list[Word] = []
     for segment in segments:
@@ -105,6 +107,31 @@ def transcribe(audio: Path, model_name: str, language: str | None) -> tuple[list
             if text:
                 words.append(Word(float(item.start), float(item.end), text))
     return words, info.language
+
+
+def detect_scene_changes(video: Path, threshold: float = 0.32) -> list[float]:
+    """Find strong visual cuts with a low-resolution analysis pass.
+
+    Scene detection is an enhancement only: a malformed source or unsupported
+    codec must not prevent the normal speech-based clipping pipeline.
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-i", str(video), "-an", "-sn",
+            "-vf", f"fps=3,scale=320:-2,select='gt(scene,{threshold})',showinfo",
+            "-f", "null", "-",
+        ],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if result.returncode:
+        return []
+    points = [float(value) for value in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", result.stderr)]
+    # Suppress near-duplicates caused by flashes or rapid transitions.
+    filtered: list[float] = []
+    for point in points:
+        if point > 0.15 and (not filtered or point - filtered[-1] >= 0.45):
+            filtered.append(point)
+    return filtered[:500]
 
 
 def _clean_title(text: str) -> str:
@@ -187,17 +214,28 @@ def _token_similarity(left: str, right: str) -> float:
     return len(left_tokens & right_tokens) / max(len(left_tokens | right_tokens), 1)
 
 
+def _scene_before(target: float, scene_changes: list[float], distance: float = 0.9) -> float | None:
+    matches = [point for point in scene_changes if target - distance <= point <= target]
+    return matches[-1] if matches else None
+
+
+def _scene_after(target: float, scene_changes: list[float], distance: float = 0.9) -> float | None:
+    return next((point for point in scene_changes if target <= point <= target + distance), None)
+
+
 def choose_clips(
     words: list[Word],
     count: int,
     min_seconds: int,
     max_seconds: int,
     focus: str = "",
+    scene_changes: Iterable[float] = (),
 ) -> list[Clip]:
     if not words:
         raise RuntimeError("Im Video wurde keine Sprache erkannt.")
 
     focus_terms = {term.strip().lower() for term in re.split(r"[,;\n]", focus) if len(term.strip()) >= 2}
+    scene_points = sorted({max(0.0, float(point)) for point in scene_changes})
     sentences = _sentence_ranges(words)
     candidates: list[tuple[float, int, int, str, list[str]]] = []
     for sentence_index, (start_idx, _) in enumerate(sentences):
@@ -219,14 +257,31 @@ def choose_clips(
 
     selected: list[Clip] = []
     for raw_score, start_idx, end_idx, text, reasons in sorted(candidates, reverse=True):
-        start = max(0.0, words[start_idx].start - 0.25)
-        end = words[end_idx].end + 0.35
+        speech_start = words[start_idx].start
+        speech_end = words[end_idx].end
+        start = max(0.0, speech_start - 0.25)
+        end = min(words[-1].end + 0.25, speech_end + 0.35)
+        scene_start = _scene_before(speech_start - 0.05, scene_points)
+        scene_end = _scene_after(speech_end + 0.05, scene_points)
+        snapped = False
+        if scene_start is not None:
+            start = scene_start
+            snapped = True
+        if scene_end is not None:
+            end = scene_end
+            snapped = True
+        if end - start > max_seconds + 1.0 or end - start < min_seconds:
+            start = max(0.0, speech_start - 0.25)
+            end = min(words[-1].end + 0.25, speech_end + 0.35)
+            snapped = False
         overlap = any(max(0.0, min(end, clip.end) - max(start, clip.start)) > min(end - start, clip.duration) * 0.35 for clip in selected)
         if overlap:
             continue
         if any(_token_similarity(text, clip.transcript) > 0.56 for clip in selected):
             continue
         score = int(max(55, min(99, 58 + raw_score * 2.6)))
+        if snapped:
+            reasons = [*reasons, "an Bildschnitt ausgerichtet"][:3]
         selected.append(Clip(start, end, score, _clean_title(text), text, reasons))
         if len(selected) >= count:
             break
@@ -254,6 +309,42 @@ def _ass_color(hex_color: str, alpha: str = "00") -> str:
     return f"&H{alpha}{blue}{green}{red}".upper()
 
 
+def _caption_groups(words: Iterable[Word]) -> list[list[Word]]:
+    """Create balanced, readable caption cards instead of rigid word chunks."""
+    groups: list[list[Word]] = []
+    current: list[Word] = []
+    for word in words:
+        if current:
+            gap = word.start - current[-1].end
+            candidate_chars = sum(len(item.text) for item in current) + len(current) + len(word.text)
+            candidate_duration = word.end - current[0].start
+            if gap >= 0.55 or len(current) >= 5 or candidate_chars > 29 or candidate_duration > 2.8:
+                groups.append(current)
+                current = []
+        current.append(word)
+        sentence_end = word.text.endswith((".", "!", "?"))
+        comma_break = word.text.endswith((",", ";", ":")) and len(current) >= 3
+        if sentence_end or comma_break:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+
+    # Avoid a flashing single-word orphan when it still fits naturally before it.
+    balanced: list[list[Word]] = []
+    for group in groups:
+        if len(group) == 1 and balanced:
+            previous = balanced[-1]
+            combined = previous + group
+            combined_chars = sum(len(item.text) for item in combined) + len(combined) - 1
+            gap = group[0].start - previous[-1].end
+            if len(combined) <= 5 and combined_chars <= 31 and gap < 0.4:
+                balanced[-1] = combined
+                continue
+        balanced.append(group)
+    return balanced
+
+
 def write_ass(
     words: Iterable[Word],
     clip: Clip,
@@ -265,16 +356,7 @@ def write_ass(
     highlight_color: str = "#FFD400",
 ) -> None:
     visible = [word for word in words if word.end >= clip.start and word.start <= clip.end]
-    groups: list[list[Word]] = []
-    current: list[Word] = []
-    for word in visible:
-        current.append(word)
-        char_count = sum(len(item.text) for item in current) + len(current) - 1
-        if len(current) >= 4 or char_count >= 25 or word.text.endswith((".", "!", "?", ",")):
-            groups.append(current)
-            current = []
-    if current:
-        groups.append(current)
+    groups = _caption_groups(visible)
 
     alignment, margin_v = {"top": (8, 230), "middle": (5, 0), "bottom": (2, 290)}.get(caption_position, (2, 290))
     caption_size = max(44, min(100, int(caption_size)))
@@ -303,9 +385,10 @@ Style: Caption,Arial,{caption_size},{primary},{secondary},&H00101010,&H96000000,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
-    for group in groups:
+    for group_index, group in enumerate(groups):
         start = max(0.0, group[0].start - clip.start)
-        end = min(clip.duration, group[-1].end - clip.start + 0.08)
+        next_group_start = groups[group_index + 1][0].start - clip.start if group_index + 1 < len(groups) else clip.duration
+        end = min(clip.duration, max(group[-1].end - clip.start + 0.18, min(next_group_start, start + 0.75)))
         if caption_style == "karaoke":
             for word_index, active_word in enumerate(group):
                 word_start = max(start, active_word.start - clip.start)
@@ -372,8 +455,10 @@ def process_video(
         json.dumps({"language": detected_language, "words": [asdict(word) for word in words]}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    progress(50, "Bildschnitte werden erkannt")
+    scene_changes = detect_scene_changes(video)
     progress(55, "Die besten Momente werden gesucht")
-    clips = choose_clips(words, count, min_seconds, max_seconds, focus)
+    clips = choose_clips(words, count, min_seconds, max_seconds, focus, scene_changes)
     (output_dir / "clips.json").write_text(
         json.dumps({"source": video.name, "clips": [asdict(clip) for clip in clips]}, ensure_ascii=False, indent=2),
         encoding="utf-8",
