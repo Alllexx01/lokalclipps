@@ -34,6 +34,7 @@ JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
 REFRAME_MODES = {"auto", "center", "blur"}   # Sprecher folgen / feste Mitte / ganzes Bild mit unscharfem Hintergrund
 PROCESSING = threading.Semaphore(max(1, int(os.environ.get("LOCALCLIP_MAX_JOBS", "1") or 1)))
+PC_HELPER_ENABLED = os.environ.get("LOCALCLIP_PC_HELPER", "").lower() in {"1", "true", "yes", "on"}
 DEFAULT_SETTINGS = {"retention_days": 3}
 # Im Server-Betrieb liegen TikTok-Zugangsdaten im dauerhaften Datenvolume statt im Container-Image.
 TIKTOK = TikTokClient(DATA if os.environ.get("LOCALCLIP_DATA_DIR") else ROOT)
@@ -71,6 +72,8 @@ def load_jobs() -> None:
                 continue
             if job.get("status") in {"queued", "running"}:
                 job.update(status="error", message="Die Verarbeitung wurde durch einen Neustart unterbrochen.")
+            elif job.get("status") == "helper_downloading":
+                job.update(status="waiting_for_pc", message="Wartet auf den Download-PC")
             JOBS[job_id] = job
             save_job(job_id)
         except (OSError, KeyError, TypeError, json.JSONDecodeError):
@@ -109,6 +112,40 @@ def update_job(job_id: str, **values) -> None:
         if values.get("status") in {"done", "error"}:
             JOBS[job_id]["last_accessed_at"] = time.time()
         save_job(job_id)
+
+
+def start_processing(job_id: str, source_video: Path | None = None) -> None:
+    """Start the CPU-heavy processing queue after a local file is available."""
+    def run_job() -> None:
+        try:
+            update_job(job_id, status="running", message="Wird verarbeitet")
+            job = JOBS[job_id]
+            video = source_video
+            if video is None:
+                video = download_video(
+                    str(job.get("source_url", "")),
+                    DATA / job_id,
+                    lambda percent, message: update_job(job_id, progress=percent, message=message),
+                )
+            results, analysis = process_video(
+                video=video,
+                output_dir=DATA / job_id,
+                progress=lambda percent, message: update_job(job_id, progress=percent, message=message),
+                **job["settings"],
+            )
+            for item in results:
+                item["url"] = f"/api/jobs/{job_id}/files/{item['filename']}"
+            update_job(job_id, status="done", progress=100, message="Fertig", clips=results, analysis=analysis)
+        except Exception as exc:
+            traceback.print_exc()
+            update_job(job_id, status="error", message=str(exc), error=str(exc))
+
+    def worker() -> None:
+        update_job(job_id, status="queued", message="Wartet, bis die vorherige Verarbeitung fertig ist")
+        with PROCESSING:
+            run_job()
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 async def homepage(request):
@@ -269,42 +306,16 @@ async def create_job(request):
         "message": "Wartet",
         "clips": [],
         "analysis": None,
+        "settings": settings,
         "created_at": now,
         "updated_at": now,
         "last_accessed_at": now,
     }
     save_job(job_id)
-
-    def run_job():
-        try:
-            update_job(job_id, status="running", message="Wird verarbeitet")
-            source_video = video
-            if source_video is None:
-                source_video = download_video(
-                    video_url,
-                    job_dir,
-                    lambda percent, message: update_job(job_id, progress=percent, message=message),
-                )
-            results, analysis = process_video(
-                video=source_video,
-                output_dir=job_dir,
-                progress=lambda percent, message: update_job(job_id, progress=percent, message=message),
-                **settings,
-            )
-            for item in results:
-                item["url"] = f"/api/jobs/{job_id}/files/{item['filename']}"
-            update_job(job_id, status="done", progress=100, message="Fertig", clips=results, analysis=analysis)
-        except Exception as exc:
-            traceback.print_exc()
-            update_job(job_id, status="error", message=str(exc), error=str(exc))
-
-    def worker():
-        # Warteschlange: Auf dem kleinen Server läuft standardmäßig nur ein Auftrag gleichzeitig.
-        update_job(job_id, message="Wartet, bis die vorherige Verarbeitung fertig ist")
-        with PROCESSING:
-            run_job()
-
-    threading.Thread(target=worker, daemon=True).start()
+    if video is None and PC_HELPER_ENABLED and video_id_from_url(video_url):
+        update_job(job_id, status="waiting_for_pc", message="Wartet auf den Download-PC")
+    else:
+        start_processing(job_id, video)
     return JSONResponse({"job_id": job_id})
 
 
@@ -321,6 +332,87 @@ async def recent_jobs(request):
     cleanup_expired_jobs()
     jobs = sorted(JOBS.values(), key=lambda item: item.get("updated_at", 0), reverse=True)
     return JSONResponse({"jobs": jobs, "retention_days": load_settings()["retention_days"]})
+
+
+async def helper_claim(request):
+    """Let the authenticated Windows helper claim one pending YouTube download."""
+    if not PC_HELPER_ENABLED or request.headers.get("x-localclip-helper") != "windows-v1":
+        return JSONResponse({"error": "PC-Helfer ist nicht freigeschaltet."}, status_code=404)
+    now = time.time()
+    with LOCK:
+        candidates = []
+        for job in JOBS.values():
+            status = job.get("status")
+            stale = status == "helper_downloading" and now - float(job.get("helper_claimed_at", 0)) > 3600
+            if status == "waiting_for_pc" or stale:
+                candidates.append(job)
+        if not candidates:
+            return JSONResponse({"job": None})
+        job = min(candidates, key=lambda item: item.get("created_at", now))
+        job.update(
+            status="helper_downloading",
+            message="Der PC lädt das Video herunter",
+            helper_claimed_at=now,
+            updated_at=now,
+        )
+        save_job(job["id"])
+        claimed = {"id": job["id"], "url": job.get("source_url", ""), "name": job.get("name", "Video")}
+    return JSONResponse({"job": claimed})
+
+
+async def helper_upload(request):
+    """Receive the source video as a stream; no browser cookies ever reach the server."""
+    if not PC_HELPER_ENABLED or request.headers.get("x-localclip-helper") != "windows-v1":
+        return JSONResponse({"error": "PC-Helfer ist nicht freigeschaltet."}, status_code=404)
+    job_id = request.path_params["job_id"]
+    job = JOBS.get(job_id)
+    if not job or job.get("status") != "helper_downloading":
+        return JSONResponse({"error": "Dieser Auftrag wartet nicht auf den PC."}, status_code=409)
+    try:
+        content_length = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        content_length = 0
+    if content_length <= 0 or content_length > 12 * 1024 * 1024 * 1024:
+        return JSONResponse({"error": "Ungültige oder zu große Videodatei."}, status_code=413)
+    filename = Path(request.headers.get("x-video-filename", "source.mp4")).name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}:
+        suffix = ".mp4"
+    target = DATA / job_id / f"source{suffix}"
+    written = 0
+    try:
+        with target.open("wb") as output:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > 12 * 1024 * 1024 * 1024:
+                    raise ValueError("Videodatei ist zu groß.")
+                output.write(chunk)
+                if content_length:
+                    progress = min(10, max(1, int(written / content_length * 10)))
+                    update_job(job_id, progress=progress, message="Der PC überträgt das Video zum Server")
+        if written != content_length or written < 1024:
+            raise ValueError("Die Videoübertragung war unvollständig.")
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        update_job(job_id, status="error", message=str(exc), error=str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    update_job(job_id, progress=10, message="Video übertragen; Verarbeitung startet")
+    start_processing(job_id, target)
+    return JSONResponse({"ok": True, "job_id": job_id})
+
+
+async def helper_failed(request):
+    if not PC_HELPER_ENABLED or request.headers.get("x-localclip-helper") != "windows-v1":
+        return JSONResponse({"error": "PC-Helfer ist nicht freigeschaltet."}, status_code=404)
+    job_id = request.path_params["job_id"]
+    if job_id not in JOBS:
+        return JSONResponse({"error": "Auftrag nicht gefunden."}, status_code=404)
+    try:
+        detail = str((await request.json()).get("error", "Download fehlgeschlagen"))[:500]
+    except (TypeError, ValueError):
+        detail = "Download auf dem PC fehlgeschlagen."
+    update_job(job_id, status="error", message=detail, error=detail)
+    return JSONResponse({"ok": True})
 
 
 async def discover_videos(request):
@@ -590,6 +682,9 @@ routes = [
     Route("/api/jobs", create_job, methods=["POST"]),
     Route("/api/discover", discover_videos, methods=["GET"]),
     Route("/api/settings", retention_settings, methods=["GET", "POST"]),
+    Route("/api/helper/claim", helper_claim, methods=["POST"]),
+    Route("/api/helper/jobs/{job_id}/upload", helper_upload, methods=["POST"]),
+    Route("/api/helper/jobs/{job_id}/failed", helper_failed, methods=["POST"]),
     Route("/api/jobs/{job_id}", job_status),
     Route("/api/jobs/{job_id}/clips/{clip_index}/render", rerender_clip, methods=["POST"]),
     Route("/api/jobs/{job_id}/files/{filename}", job_file),

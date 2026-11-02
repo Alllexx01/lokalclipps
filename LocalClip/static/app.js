@@ -64,14 +64,14 @@ async function loadRecentJobs() {
     retentionDays.value = data.retention_days;
     retentionLabel.textContent = `${data.retention_days} ${data.retention_days === 1 ? 'Tag' : 'Tage'}`;
     const finished = data.jobs.filter(job => job.status === 'done' && job.clips?.length);
-    const active = data.jobs.filter(job => ['queued', 'running'].includes(job.status));
+    const active = data.jobs.filter(job => ['waiting_for_pc', 'helper_downloading', 'queued', 'running'].includes(job.status));
     recentJobs = new Map(finished.map(job => [job.id, job]));
     if (!setupPanel.classList.contains('hidden')) recentPanel.classList.remove('hidden');
     if (!finished.length && !active.length) {
       recentGrid.innerHTML = '<p class="recent-empty">Noch keine fertigen Projekte. Dein nächster Auftrag erscheint automatisch hier.</p>';
       return;
     }
-    const activeCards = active.map(job => `<article class="recent-progress"><h3>${escapeHtml(job.name || 'Video-Projekt')}</h3><div class="recent-meta"><span>${job.status === 'queued' ? 'Wartet' : 'Wird verarbeitet'}</span><span>${Number(job.progress || 0)} %</span></div><div class="recent-empty" style="padding:0">${escapeHtml(job.message || '')}</div><div class="bar"><i style="width:${Number(job.progress || 0)}%"></i></div></article>`);
+    const activeCards = active.map(job => `<article class="recent-progress"><h3>${escapeHtml(job.name || 'Video-Projekt')}</h3><div class="recent-meta"><span>${job.status === 'waiting_for_pc' ? 'Wartet auf PC' : job.status === 'helper_downloading' ? 'PC lädt Video' : job.status === 'queued' ? 'Wartet' : 'Wird verarbeitet'}</span><span>${Number(job.progress || 0)} %</span></div><div class="recent-empty" style="padding:0">${escapeHtml(job.message || '')}</div><div class="bar"><i style="width:${Number(job.progress || 0)}%"></i></div></article>`);
     const finishedCards = finished.map(job => {
       const date = new Date((job.updated_at || job.created_at) * 1000).toLocaleString('de-DE', {dateStyle:'medium', timeStyle:'short'});
       return `<article class="recent-card"><h3>${escapeHtml(job.name || 'Video-Projekt')}</h3><div class="recent-meta"><span>${job.clips.length} Clips</span><span>${date}</span></div><button class="recent-open" data-job-id="${job.id}">Projekt öffnen</button></article>`;

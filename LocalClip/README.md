@@ -88,6 +88,17 @@ Plattform den automatischen Abruf blockiert, kann die Videodatei direkt über di
 große Dateiauswahl hochgeladen werden. LocalClip fordert keine YouTube-Sitzungsdatei
 und keine YouTube-Zugangsdaten an. Plattform-Sperren werden nicht umgangen.
 
+### PC-Helfer für YouTube-Links
+
+Auf dem Cloud-Server ist `LOCALCLIP_PC_HELPER=1` aktiv. Ein am Handy gestarteter
+YouTube-Auftrag wartet dadurch auf `pc_helper.py`, statt den Download über die oft
+blockierte Rechenzentrums-IP zu versuchen. `start_pc_helper.bat` startet den Helfer
+unter Windows. Er meldet sich mit `LocalClip/.deploy/login.txt` am bestehenden Server
+an, lädt das Video über den Internetanschluss des PCs und streamt nur die Videodatei
+zurück. Browser-Cookies und Zugangsdaten verlassen den PC nicht. Nach erfolgreicher
+Übertragung wird die temporäre lokale Kopie gelöscht und der Server verarbeitet den
+Auftrag automatisch weiter.
+
 Es dürfen nur eigene Videos oder Inhalte mit entsprechender Erlaubnis verarbeitet
 und veröffentlicht werden.
 
