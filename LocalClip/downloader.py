@@ -5,8 +5,12 @@ import math
 import re
 import socket
 import time
+import urllib.request
+import xml.etree.ElementTree as ET
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -148,6 +152,30 @@ def video_age(entry: dict, now: float | None = None) -> tuple[str, int | None]:
     return time.strftime("%Y-%m-%d", time.localtime(uploaded)), age_days
 
 
+@lru_cache(maxsize=256)
+def channel_feed_dates(channel_id: str) -> dict[str, float]:
+    """Read recent publication dates from YouTube's public Atom feed."""
+    if not re.fullmatch(r"UC[A-Za-z0-9_-]{20,30}", channel_id):
+        return {}
+    url = "https://www.youtube.com/feeds/videos.xml?channel_id=" + channel_id
+    request = urllib.request.Request(url, headers={"User-Agent": "LocalClip/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            root = ET.fromstring(response.read())
+    except (OSError, ValueError, ET.ParseError):
+        return {}
+    dates: dict[str, float] = {}
+    namespaces = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015"}
+    for entry in root.findall("atom:entry", namespaces):
+        video_id = entry.findtext("yt:videoId", default="", namespaces=namespaces)
+        published = entry.findtext("atom:published", default="", namespaces=namespaces)
+        try:
+            dates[video_id] = datetime.fromisoformat(published.replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            continue
+    return dates
+
+
 def search_public_videos(
     query: str = "",
     category: str = "all",
@@ -221,6 +249,7 @@ def search_public_videos(
             "title": str(entry.get("title") or "Unbenanntes Video").strip()[:180],
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "channel": str(entry.get("channel") or entry.get("uploader") or "Unbekannter Kanal")[:100],
+            "channel_id": str(entry.get("channel_id") or ""),
             "duration": duration,
             "views": int(entry.get("view_count") or 0),
             "published_at": published_at,
@@ -229,6 +258,20 @@ def search_public_videos(
             "score": score,
             "reasons": reasons,
         })
+
+    missing_channels = sorted({
+        item["channel_id"] for item in results
+        if item["age_days"] is None and item["channel_id"].startswith("UC")
+    })
+    if missing_channels:
+        with ThreadPoolExecutor(max_workers=min(6, len(missing_channels))) as pool:
+            feeds = dict(zip(missing_channels, pool.map(channel_feed_dates, missing_channels)))
+        for item in results:
+            timestamp = feeds.get(item["channel_id"], {}).get(item["id"])
+            if item["age_days"] is None and timestamp:
+                item["published_at"], item["age_days"] = video_age({"timestamp": timestamp})
+    for item in results:
+        item.pop("channel_id", None)
 
     if sort == "views":
         results.sort(key=lambda item: item["views"], reverse=True)

@@ -120,6 +120,19 @@ def test_video_age_accepts_upload_date_and_timestamp():
     assert video_age({}, now=now) == ("", None)
 
 
+def test_search_enriches_missing_age_from_public_channel_feed(monkeypatch):
+    channel_id = "UC" + "a" * 22
+    install_fake_ytdlp(monkeypatch, {
+        "podcast": [video("recent01", channel_id=channel_id)],
+    })
+    published = time.time() - 86400 * 9
+    monkeypatch.setattr(downloader, "channel_feed_dates", lambda value: {"recent01": published})
+    result = search_public_videos("", "podcast", 4)[0]
+    assert 8 <= result["age_days"] <= 10
+    assert result["published_at"]
+    assert "channel_id" not in result
+
+
 def test_video_id_from_url():
     assert video_id_from_url("https://www.youtube.com/watch?v=abcDEF12345&t=3") == "abcDEF12345"
     assert video_id_from_url("https://youtu.be/abcDEF12345") == "abcDEF12345"
