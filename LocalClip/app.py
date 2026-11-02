@@ -22,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from core import Clip, Word, process_video, render_clip, write_ass
-from downloader import download_video, validate_public_video_url
+from downloader import download_video, search_public_videos, validate_public_video_url
 from tiktok import TikTokClient, TikTokError, hashtag_packages
 
 
@@ -320,6 +320,16 @@ async def recent_jobs(request):
     return JSONResponse({"jobs": jobs, "retention_days": load_settings()["retention_days"]})
 
 
+async def discover_videos(request):
+    query = str(request.query_params.get("q", ""))[:100]
+    category = str(request.query_params.get("category", "all"))
+    try:
+        results = await run_in_threadpool(search_public_videos, query, category, 12)
+        return JSONResponse({"results": results, "query": query, "category": category})
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 async def retention_settings(request):
     if request.method == "GET":
         return JSONResponse(load_settings())
@@ -510,6 +520,7 @@ routes = [
     Route("/login", login, methods=["GET", "POST"]),
     Route("/api/jobs", recent_jobs, methods=["GET"]),
     Route("/api/jobs", create_job, methods=["POST"]),
+    Route("/api/discover", discover_videos, methods=["GET"]),
     Route("/api/settings", retention_settings, methods=["GET", "POST"]),
     Route("/api/jobs/{job_id}", job_status),
     Route("/api/jobs/{job_id}/clips/{clip_index}/render", rerender_clip, methods=["POST"]),

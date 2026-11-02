@@ -11,6 +11,11 @@ const progressPercent = document.querySelector('#progressPercent');
 const progressMessage = document.querySelector('#progressMessage');
 const clipGrid = document.querySelector('#clipGrid');
 const potentialCard = document.querySelector('#potentialCard');
+const finderQuery = document.querySelector('#finderQuery');
+const finderCategory = document.querySelector('#finderCategory');
+const finderSearch = document.querySelector('#finderSearch');
+const finderStatus = document.querySelector('#finderStatus');
+const finderResults = document.querySelector('#finderResults');
 const recentPanel = document.querySelector('#recentPanel');
 const recentGrid = document.querySelector('#recentGrid');
 const retentionDays = document.querySelector('#retentionDays');
@@ -112,6 +117,43 @@ function updateCaptionPreview() {
 [captionStyle, captionPosition, captionSize, captionColor, highlightColor].forEach(control => control.addEventListener('input', updateCaptionPreview));
 captionEnabled.addEventListener('change', () => { captionPreview.style.opacity = captionEnabled.checked ? '1' : '.35'; });
 updateCaptionPreview();
+
+finderSearch.addEventListener('click', async () => {
+  finderSearch.disabled = true;
+  finderStatus.textContent = 'Öffentliche Videos werden durchsucht und bewertet …';
+  finderResults.innerHTML = '';
+  try {
+    const params = new URLSearchParams({q:finderQuery.value.trim(), category:finderCategory.value});
+    const response = await fetch(`/api/discover?${params}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Videosuche fehlgeschlagen');
+    const results = data.results || [];
+    finderStatus.textContent = results.length ? `${results.length} Vorschläge gefunden.` : 'Keine passenden Vorschläge gefunden. Versuche einen anderen Suchbegriff.';
+    finderResults.innerHTML = results.map(video => {
+      const minutes = video.duration ? `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')} Min.` : 'Länge unbekannt';
+      const views = video.views ? `${new Intl.NumberFormat('de-DE', {notation:'compact'}).format(video.views)} Aufrufe` : 'Aufrufe unbekannt';
+      return `<article class="finder-card">
+        ${video.thumbnail ? `<img loading="lazy" src="${escapeAttribute(video.thumbnail)}" alt="">` : ''}
+        <div class="finder-card-body"><h3>${escapeHtml(video.title)}</h3>
+        <div class="finder-card-meta">${escapeHtml(video.channel)} · ${minutes} · ${views}</div>
+        <div class="finder-score">Finder-Score ${Number(video.score || 0)}</div>
+        <p class="finder-reasons">${(video.reasons || []).map(escapeHtml).join(' · ')}</p>
+        <button class="finder-use" type="button" data-url="${escapeAttribute(video.url)}">Dieses Video clippen</button></div>
+      </article>`;
+    }).join('');
+    document.querySelectorAll('.finder-use').forEach(button => button.addEventListener('click', () => {
+      urlInput.value = button.dataset.url;
+      fileInput.value = '';
+      fileLabel.textContent = 'Video hier ablegen oder auswählen';
+      finderStatus.textContent = 'Video übernommen. Prüfe die Einstellungen und starte „Clips erstellen“.';
+      setupPanel.scrollIntoView({behavior:'smooth', block:'start'});
+    }));
+  } catch (error) {
+    finderStatus.textContent = error.message;
+  } finally {
+    finderSearch.disabled = false;
+  }
+});
 
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) {
@@ -473,6 +515,10 @@ function showError(message) {
 
 function escapeHtml(text) {
   const div = document.createElement('div'); div.textContent = text; return div.innerHTML;
+}
+
+function escapeAttribute(text) {
+  return escapeHtml(String(text || '')).replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 document.querySelector('#newJob').addEventListener('click', () => location.reload());
