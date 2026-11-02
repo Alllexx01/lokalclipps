@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+import hashlib
 import hmac
 import json
 import os
@@ -115,30 +115,79 @@ async def healthcheck(request):
     return JSONResponse({"status": "ok"})
 
 
-async def password_protection(request, call_next):
-    """Protect the cloud deployment while leaving Render's health probe public."""
-    password = os.environ.get("LOCALCLIP_PASSWORD", "").strip()
-    if not password or request.url.path == "/health":
-        return await call_next(request)
-    authorization = request.headers.get("authorization", "")
+def _session_token(username: str, password: str, expires_at: int) -> str:
+    payload = f"{username}:{expires_at}".encode("utf-8")
+    signature = hmac.new(password.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return f"{expires_at}.{signature}"
+
+
+def _valid_session(token: str, username: str, password: str) -> bool:
     try:
-        scheme, token = authorization.split(" ", 1)
-        username, provided_password = base64.b64decode(token).decode("utf-8").split(":", 1)
-    except (ValueError, UnicodeDecodeError):
-        username = provided_password = ""
-        scheme = ""
+        expires_raw, provided_signature = token.split(".", 1)
+        expires_at = int(expires_raw)
+    except (TypeError, ValueError):
+        return False
+    if expires_at < int(time.time()):
+        return False
+    expected = _session_token(username, password, expires_at).split(".", 1)[1]
+    return hmac.compare_digest(provided_signature, expected)
+
+
+async def login(request):
+    password = os.environ.get("LOCALCLIP_PASSWORD", "").strip()
     expected_user = os.environ.get("LOCALCLIP_USERNAME", "alex")
-    if (
-        scheme.lower() != "basic"
-        or not hmac.compare_digest(username, expected_user)
-        or not hmac.compare_digest(provided_password, password)
-    ):
-        return HTMLResponse(
-            "Anmeldung erforderlich.",
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="LokalClipps"'},
-        )
-    return await call_next(request)
+    error = ""
+    if request.method == "POST":
+        form = await request.form()
+        username = str(form.get("username", ""))
+        provided_password = str(form.get("password", ""))
+        if (
+            hmac.compare_digest(username, expected_user)
+            and hmac.compare_digest(provided_password, password)
+        ):
+            expires_at = int(time.time()) + 365 * 24 * 60 * 60
+            response = RedirectResponse("/", status_code=303)
+            response.set_cookie(
+                "localclip_session",
+                _session_token(expected_user, password, expires_at),
+                max_age=365 * 24 * 60 * 60,
+                expires=expires_at,
+                path="/",
+                secure=True,
+                httponly=True,
+                samesite="lax",
+            )
+            return response
+        error = "Benutzername oder Passwort ist falsch."
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LokalClipps – Anmeldung</title>
+<style>
+body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#080b12;color:#fff;font:16px system-ui,sans-serif}}
+main{{width:min(88vw,360px);padding:28px;border:1px solid #283142;border-radius:18px;background:#111722;box-shadow:0 18px 60px #0008}}
+h1{{margin:0 0 22px;color:#ff315d}}label{{display:block;margin:14px 0 6px;color:#cbd3e1}}
+input,button{{box-sizing:border-box;width:100%;padding:13px;border-radius:10px;font:inherit}}
+input{{border:1px solid #39445a;background:#080b12;color:#fff}}button{{margin-top:20px;border:0;background:#ff315d;color:#fff;font-weight:700}}
+p{{color:#ff9aaf}}
+</style></head><body><main><h1>LokalClipps</h1>
+<form method="post"><label>Benutzername</label><input name="username" autocomplete="username" required value="{expected_user}">
+<label>Passwort</label><input name="password" type="password" autocomplete="current-password" required autofocus>
+<button type="submit">Anmelden</button></form>{f'<p>{error}</p>' if error else ''}</main></body></html>"""
+    )
+
+
+async def password_protection(request, call_next):
+    """Protect the cloud deployment with a long-lived, signed login cookie."""
+    password = os.environ.get("LOCALCLIP_PASSWORD", "").strip()
+    if not password or request.url.path in {"/health", "/login"}:
+        return await call_next(request)
+    expected_user = os.environ.get("LOCALCLIP_USERNAME", "alex")
+    if _valid_session(request.cookies.get("localclip_session", ""), expected_user, password):
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": "Anmeldung erforderlich."}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
 
 
 async def create_job(request):
@@ -457,6 +506,7 @@ async def tiktok_publish_status(request):
 routes = [
     Route("/", homepage),
     Route("/health", healthcheck),
+    Route("/login", login, methods=["GET", "POST"]),
     Route("/api/jobs", recent_jobs, methods=["GET"]),
     Route("/api/jobs", create_job, methods=["POST"]),
     Route("/api/settings", retention_settings, methods=["GET", "POST"]),
