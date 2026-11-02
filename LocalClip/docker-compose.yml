@@ -8,6 +8,7 @@ services:
       LOCALCLIP_PASSWORD: ${LOCALCLIP_PASSWORD}
     volumes:
       - lokalclipps_data:/var/data
+      - model_cache:/root/.cache/huggingface
 
   caddy:
     image: caddy:2-alpine
@@ -26,5 +27,6 @@ services:
 
 volumes:
   lokalclipps_data:
+  model_cache:
   caddy_data:
   caddy_config:

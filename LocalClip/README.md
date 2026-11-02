@@ -1,46 +1,78 @@
 # LokalClipps
 
-Eine lokale, eigenstaendige Alternative fuer automatisches Short-Form-Clipping.
+LokalClipps ist eine selbst gehostete Web-App, die lange Videos transkribiert,
+interessante Passagen auswählt und daraus vertikale Short-Clips erstellt.
 
-## Funktionen
+## Aktueller Funktionsumfang
 
-- Video-Upload im lokalen Browser
-- Import über öffentliche Video-URLs (unter anderem YouTube, Twitch und TikTok)
-- lokale Transkription mit faster-whisper
-- automatische Auswahl interessanter 25- bis 60-Sekunden-Passagen
-- 9:16-Export mit unscharfem Hintergrund
-- Clips zunächst ohne fest eingebrannte Untertitel erzeugen
-- Untertitel anschließend pro Clip bearbeiten und neu rendern
-- Karaoke-, Fett-, Box- und Minimal-Stil mit Position, Größe und Farben
-- optionaler Suchfokus für Themen, Personen oder Momentarten
-- mehrere MP4-Clips pro Quellvideo
-- lokale Projektablage über drei Tage, in der Oberfläche auf 1 bis 90 Tage einstellbar
-- fertige Projekte bleiben auch nach einem Neustart verfügbar
-- keine Cloud-API und kein Benutzerkonto
+- Video-Upload und Import öffentlicher Video-URLs
+- öffentlicher Video-Finder für Gaming, Podcasts, Reactions und Comedy
+- Finder-Score nach Titel, Videolänge und Reichweite
+- lokales Speech-to-Text mit `faster-whisper`
+- automatische Highlight-Auswahl nach Hook, Thema, Tempo und Sprechpausen
+- Erkennung visueller Szenenwechsel und daran ausgerichtete Clipgrenzen
+- Clip-Potenzial-Wertung von 0 bis 100 mit Empfehlungen
+- 9:16-Export mit FFmpeg
+- lesbare Untertitelgruppen und wortgenaues Karaoke-Highlighting
+- Untertitelstile, Position, Größe und Farben nachträglich anpassbar
+- Teilen- und TikTok-Oberfläche
+- automatische Projektbereinigung nach einstellbarer Aufbewahrungszeit
+- HTTPS und langlebiger, signierter Login-Cookie
 
-## Start unter Windows
+## Lokaler Start unter Windows
 
-1. `start.bat` doppelt anklicken.
-2. Im Browser ein Video auswaehlen.
-3. Auf **Clips erstellen** klicken.
-
-Beim ersten Lauf laedt faster-whisper das ausgewaehlte Sprachmodell herunter. Danach kann
-die Verarbeitung lokal erfolgen. FFmpeg muss im PATH liegen.
-
-## Manuell starten
+Voraussetzungen: Python 3.12 und FFmpeg im `PATH`.
 
 ```powershell
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-Die App ist danach unter <http://127.0.0.1:8765> erreichbar.
+Danach ist die App unter <http://127.0.0.1:8765> erreichbar. Alternativ kann
+`start.bat` verwendet werden.
 
-## Render-Betrieb
+## Produktion
 
-`Dockerfile` und `render.yaml` sind für einen separaten Render-Webservice
-vorbereitet. Der Dienst benötigt FFmpeg, mindestens 2 GB RAM und einen
-dauerhaften Datenträger für Videos und Projekte. Setze in Render
-`LOCALCLIP_PASSWORD` als Secret; die Oberfläche ist dann per HTTP Basic Auth
-geschützt. Die öffentliche Gesundheitsprüfung ist unter `/health` erreichbar.
+Die aktive Produktion läuft per Docker Compose auf einem Hetzner-Server:
 
+- Webseite: <https://2-29-154-156.sslip.io/>
+- Reverse Proxy und TLS: Caddy
+- App-Port im Container-Netz: `10000`
+- persistente Projekte: Docker-Volume `lokalclipps_data`
+- persistenter Whisper-Cache: Docker-Volume `model_cache`
+
+Benötigte Variablen in der nicht versionierten `.env`:
+
+```text
+LOCALCLIP_DOMAIN=...
+LOCALCLIP_USERNAME=...
+LOCALCLIP_PASSWORD=...
+```
+
+Deployment auf dem Server:
+
+```bash
+cd /opt/lokalclipps/LocalClip
+git pull --ff-only
+docker compose up -d --build
+```
+
+`render.yaml` ist nur eine frühere, derzeit nicht verwendete Alternative.
+
+## Cookies und Videoquellen
+
+Der Video-Finder arbeitet ohne Benutzer-Cookies. Manche Plattformen verlangen
+beim eigentlichen Download trotzdem eine Anmeldung. Eine hochgeladene
+`cookies.txt` wird nur für den jeweiligen Download benutzt und anschließend
+auch im Fehlerfall gelöscht. Plattform-Sperren werden nicht umgangen.
+
+Es dürfen nur eigene Videos oder Inhalte mit entsprechender Erlaubnis verarbeitet
+und veröffentlicht werden.
+
+## Tests
+
+```powershell
+python -m pytest tests -q
+python -m py_compile app.py core.py downloader.py tiktok.py
+node --check static/app.js
+```
