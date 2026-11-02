@@ -21,8 +21,9 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from core import Clip, Word, process_video, render_clip, write_ass
-from downloader import download_video, search_public_videos, validate_public_video_url
+from core import ZOOM_MODES, Clip, Word, make_hook, process_video, render_short
+from postcopy import build_variants
+from downloader import download_video, search_public_videos, validate_public_video_url, video_id_from_url
 from tiktok import TikTokClient, TikTokError, hashtag_packages
 
 
@@ -31,8 +32,11 @@ DATA = Path(os.environ.get("LOCALCLIP_DATA_DIR", ROOT / "data")).resolve()
 SETTINGS_FILE = DATA / "settings.json"
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
+REFRAME_MODES = {"auto", "center", "blur"}   # Sprecher folgen / feste Mitte / ganzes Bild mit unscharfem Hintergrund
+PROCESSING = threading.Semaphore(max(1, int(os.environ.get("LOCALCLIP_MAX_JOBS", "1") or 1)))
 DEFAULT_SETTINGS = {"retention_days": 3}
-TIKTOK = TikTokClient(ROOT)
+# Im Server-Betrieb liegen TikTok-Zugangsdaten im dauerhaften Datenvolume statt im Container-Image.
+TIKTOK = TikTokClient(DATA if os.environ.get("LOCALCLIP_DATA_DIR") else ROOT)
 
 
 def load_settings() -> dict:
@@ -240,6 +244,11 @@ async def create_job(request):
             "caption_size": max(44, min(100, int(form.get("caption_size", 72)))),
             "caption_color": str(form.get("caption_color", "#FFFFFF")),
             "highlight_color": str(form.get("highlight_color", "#FFD400")),
+            "reframe": str(form.get("reframe", "auto")),
+            "tighten": str(form.get("tighten", "")).lower() in {"1", "true", "on", "yes"},
+            "hook": str(form.get("hook", "")).lower() in {"1", "true", "on", "yes"},
+            "snap_scenes": str(form.get("snap", "scene")).lower() != "speech",
+            "zoom": str(form.get("zoom", "off")),
         }
     except ValueError:
         if cookie_file:
@@ -252,15 +261,24 @@ async def create_job(request):
         settings["caption_style"] = "none"
     if settings["caption_position"] not in {"top", "middle", "bottom"}:
         settings["caption_position"] = "bottom"
+    if settings["reframe"] not in REFRAME_MODES:
+        settings["reframe"] = "auto"
+    if settings["zoom"] not in ZOOM_MODES:
+        settings["zoom"] = "off"
     for color_key, fallback in (("caption_color", "#FFFFFF"), ("highlight_color", "#FFD400")):
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", settings[color_key]):
             settings[color_key] = fallback
 
     now = time.time()
-    display_name = Path(upload.filename).stem if has_upload else video_url.split("/")[-1].split("?")[0] or "URL-Video"
+    given_title = re.sub(r"\s+", " ", str(form.get("title", ""))).strip()[:90]
+    display_name = (
+        Path(upload.filename).stem if has_upload
+        else given_title or video_url.split("/")[-1].split("?")[0] or "URL-Video"
+    )
     JOBS[job_id] = {
         "id": job_id,
         "name": display_name[:90],
+        "source_url": "" if has_upload else video_url,
         "status": "queued",
         "progress": 0,
         "message": "Wartet",
@@ -272,9 +290,9 @@ async def create_job(request):
     }
     save_job(job_id)
 
-    def worker():
+    def run_job():
         try:
-            update_job(job_id, status="running")
+            update_job(job_id, status="running", message="Wird verarbeitet")
             source_video = video
             if source_video is None:
                 try:
@@ -301,6 +319,12 @@ async def create_job(request):
             traceback.print_exc()
             update_job(job_id, status="error", message=str(exc), error=str(exc))
 
+    def worker():
+        # Warteschlange: Auf dem kleinen Server läuft standardmäßig nur ein Auftrag gleichzeitig.
+        update_job(job_id, message="Wartet, bis die vorherige Verarbeitung fertig ist")
+        with PROCESSING:
+            run_job()
+
     threading.Thread(target=worker, daemon=True).start()
     return JSONResponse({"job_id": job_id})
 
@@ -323,9 +347,25 @@ async def recent_jobs(request):
 async def discover_videos(request):
     query = str(request.query_params.get("q", ""))[:100]
     category = str(request.query_params.get("category", "all"))
+    sort = str(request.query_params.get("sort", "score"))
+
+    def number(name: str, default: int, low: int, high: int) -> int:
+        try:
+            return max(low, min(high, int(request.query_params.get(name, default))))
+        except (TypeError, ValueError):
+            return default
+
+    limit = number("limit", 12, 4, 36)
+    min_minutes = number("min_minutes", 0, 0, 600)
+    max_minutes = number("max_minutes", 0, 0, 600)
     try:
-        results = await run_in_threadpool(search_public_videos, query, category, 12)
-        return JSONResponse({"results": results, "query": query, "category": category})
+        results = await run_in_threadpool(
+            search_public_videos, query, category, limit, min_minutes, max_minutes, sort,
+        )
+        used = {video_id_from_url(job.get("source_url", "")) for job in JOBS.values()} - {""}
+        for item in results:
+            item["already_used"] = item["id"] in used      # schon einmal geclippt
+        return JSONResponse({"results": results, "query": query, "category": category, "limit": limit})
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
 
@@ -400,25 +440,74 @@ async def rerender_clip(request):
     version = uuid.uuid4().hex[:8]
     subtitle = job_dir / f"clip_{clip_index:02d}_{version}.ass"
     output = job_dir / f"clip_{clip_index:02d}_custom_{version}.mp4"
+    # Ältere Projekte kennen die neuen Optionen nicht und behalten ihr bisheriges Aussehen.
+    # Reihenfolge: jetzt im Dialog gewählt > früher für diesen Clip gespeichert > Einstellung des Projekts.
+    saved = {**(manifest.get("options") or {}), **((manifest.get("clip_options") or {}).get(str(clip_index)) or {})}
+    reframe = payload.get("reframe", saved.get("reframe", "blur"))
+    if reframe not in REFRAME_MODES:
+        reframe = "blur"
+    tighten = bool(payload.get("tighten", saved.get("tighten", False)))
+    hook = bool(payload.get("hook", saved.get("hook", False)))
+    zoom = payload.get("zoom", saved.get("zoom", "off"))
+    if zoom not in ZOOM_MODES:
+        zoom = "off"
+    caption = {
+        "style": style, "position": position, "size": size,
+        "color": text_color, "highlight": highlight_color,
+    } if enabled else None
 
     def render_custom_clip():
-        rendered_subtitle = None
-        if enabled:
-            write_ass(words, clip, subtitle, style, position, size, text_color, highlight_color)
-            rendered_subtitle = subtitle
-        render_clip(source, clip, rendered_subtitle, output)
+        return render_short(
+            source, words, clip, output, subtitle,
+            caption=caption, reframe=reframe, tighten=tighten, hook=hook, zoom=zoom,
+        )
 
     try:
-        await run_in_threadpool(render_custom_clip)
+        applied = await run_in_threadpool(render_custom_clip)
     except Exception as exc:
         traceback.print_exc()
         return JSONResponse({"error": str(exc)}, status_code=500)
+    chosen = {"reframe": reframe, "tighten": tighten, "hook": hook, "zoom": zoom}
+    manifest.setdefault("clip_options", {})[str(clip_index)] = chosen      # beim nächsten Bearbeiten vorbelegt
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     output_url = f"/api/jobs/{job_id}/files/{output.name}"
     clips = list(job.get("clips", []))
     if clip_index <= len(clips):
-        clips[clip_index - 1] = {**clips[clip_index - 1], "filename": output.name, "url": output_url}
+        clips[clip_index - 1] = {
+            **clips[clip_index - 1], "filename": output.name, "url": output_url,
+            "layout": applied["reframe"], "tightened": applied["tightened"], "hook": applied["hook"], "zoom": applied["zoom"],
+            "duration": round(clip.duration - applied["tightened"], 1), "options": chosen,
+        }
     update_job(job_id, clips=clips, last_accessed_at=time.time())
-    return JSONResponse({"url": output_url, "filename": output.name})
+    return JSONResponse({"url": output_url, "filename": output.name, "clip": clips[clip_index - 1] if clip_index <= len(clips) else None})
+
+
+async def clip_captions(request):
+    """Fertige Bildunterschriften (Beschreibung + Hashtags) für einen Clip vorschlagen."""
+    job_id = request.path_params["job_id"]
+    try:
+        clip_index = int(request.path_params["clip_index"])
+    except ValueError:
+        return JSONResponse({"error": "Ungültiger Clip."}, status_code=400)
+    manifest_path = DATA / job_id / "clips.json"
+    if job_id not in JOBS or not manifest_path.is_file():
+        return JSONResponse({"error": "Der Auftrag ist nicht mehr verfügbar."}, status_code=404)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        clip = Clip(**manifest["clips"][clip_index - 1]) if clip_index >= 1 else None
+    except (IndexError, KeyError, TypeError, ValueError):
+        clip = None
+    if clip is None:
+        return JSONResponse({"error": "Clip nicht gefunden."}, status_code=404)
+    language = "de"
+    transcript_path = DATA / job_id / "transcript.json"
+    if transcript_path.is_file():
+        try:
+            language = str(json.loads(transcript_path.read_text(encoding="utf-8")).get("language") or "de")
+        except (OSError, ValueError):
+            pass
+    variants = build_variants(clip.title, clip.transcript, make_hook(clip), language)
+    return JSONResponse({"variants": variants})
 
 
 async def tiktok_settings(request):
@@ -525,6 +614,7 @@ routes = [
     Route("/api/jobs/{job_id}", job_status),
     Route("/api/jobs/{job_id}/clips/{clip_index}/render", rerender_clip, methods=["POST"]),
     Route("/api/jobs/{job_id}/files/{filename}", job_file),
+    Route("/api/jobs/{job_id}/clips/{clip_index}/captions", clip_captions, methods=["GET"]),
     Route("/api/tiktok/settings", tiktok_settings, methods=["GET", "POST"]),
     Route("/auth/tiktok/login", tiktok_login),
     Route("/auth/tiktok/callback", tiktok_callback),

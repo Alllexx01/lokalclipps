@@ -4,6 +4,9 @@ import ipaddress
 import math
 import re
 import socket
+import time
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,6 +18,17 @@ DISCOVERY_CATEGORIES = {
     "reaction": "reaction deutsch",
     "comedy": "comedy deutsch lustig",
 }
+
+# Mehrere Suchanfragen pro Kategorie ergeben mehr Vielfalt als eine einzelne Suche.
+DISCOVERY_QUERIES = {
+    "all": ["deutsch podcast folge", "deutsch gaming highlights", "deutsch comedy lustig", "deutsch reaction"],
+    "gaming": ["gaming deutsch highlights", "gaming deutsch lustige momente", "gaming deutsch story"],
+    "podcast": ["podcast deutsch interview", "podcast deutsch folge gespräch", "podcast deutsch diskussion"],
+    "reaction": ["reaction deutsch", "reaktion deutsch lustig", "react deutsch"],
+    "comedy": ["comedy deutsch lustig", "stand up comedy deutsch", "sketch comedy deutsch"],
+}
+COMPILATION_TERMS = ("compilation", "zusammenschnitt", "best of", "bestof")
+SORT_MODES = {"score", "views", "length"}
 
 DISCOVERY_HOOKS = {
     "warum", "fehler", "geheimnis", "unglaublich", "wirklich", "beste", "schlimmste",
@@ -42,76 +56,161 @@ def validate_public_video_url(value: str) -> str:
     return value
 
 
-def search_public_videos(query: str = "", category: str = "all", limit: int = 12) -> list[dict]:
-    """Return public YouTube search suggestions without authentication cookies."""
+def video_id_from_url(url: str) -> str:
+    """YouTube-ID aus einer Video-URL (leer, wenn keine erkannt wird)."""
+    match = re.search(r"(?:v=|youtu\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{6,20})", str(url or ""))
+    return match.group(1) if match else ""
+
+
+def score_entry(entry: dict, now: float | None = None) -> tuple[int, list[str]]:
+    """Bewertet, wie gut sich ein Video zum Clippen eignet (ohne Anmeldung, nur aus Suchdaten)."""
+    title = str(entry.get("title") or "")
+    lower = title.lower()
+    duration = int(entry.get("duration") or 0)
+    views = int(entry.get("view_count") or 0)
+    reasons: list[str] = []
+    score = 35.0
+    if 300 <= duration <= 5400:
+        score += 28
+        reasons.append("gute Ausgangslänge")
+    elif 90 <= duration <= 10800:
+        score += 15
+    else:
+        score -= 8
+    if duration and duration < 90 or "#shorts" in lower:
+        score -= 20                                   # Shorts sind schon kurz und taugen nicht als Quelle
+    if any(term in lower for term in COMPILATION_TERMS):
+        score -= 8                                    # Zusammenschnitte sind meist schon geclippt
+    hook_hits = sum(1 for term in DISCOVERY_HOOKS if term in lower)
+    if hook_hits:
+        score += min(18, hook_hits * 7)
+        reasons.append("starker Titel")
+    if "?" in title:
+        score += 3
+    if re.search(r"\d", title):
+        score += 2
+    letters = [char for char in title if char.isalpha()]
+    if len(letters) > 8 and sum(char.isupper() for char in letters) / len(letters) > 0.7:
+        score -= 3                                    # Titel nur in Großbuchstaben wirken oft reißerisch
+    if views:
+        score += min(16, max(0, math.log10(max(views, 1)) - 2) * 4)
+        if views >= 100_000:
+            reasons.append("hohe Reichweite")
+    upload_date = str(entry.get("upload_date") or "")
+    if re.fullmatch(r"\d{8}", upload_date):
+        try:
+            uploaded = time.mktime(time.strptime(upload_date, "%Y%m%d"))
+            age_days = max(1.0, ((now or time.time()) - uploaded) / 86400)
+            if age_days <= 45:
+                score += 3
+                reasons.append("aktuell")
+            if views and age_days <= 365:
+                score += min(5, max(0.0, math.log10(views / age_days + 1)) * 1.5)
+        except (ValueError, OverflowError):
+            pass
+    if entry.get("live_status") in {"is_live", "is_upcoming"}:
+        score -= 30
+    return int(max(0, min(99, round(score)))), reasons[:3] or ["öffentlich auffindbar"]
+
+
+def _diversify(results: list[dict], per_channel: int = 2) -> list[dict]:
+    """Verhindert, dass ein einzelner Kanal die ganze Liste füllt."""
+    seen: Counter = Counter()
+    first: list[dict] = []
+    rest: list[dict] = []
+    for item in results:
+        (first if seen[item["channel"]] < per_channel else rest).append(item)
+        seen[item["channel"]] += 1
+    return first + rest
+
+
+def search_public_videos(
+    query: str = "",
+    category: str = "all",
+    limit: int = 12,
+    min_minutes: int = 0,
+    max_minutes: int = 0,
+    sort: str = "score",
+) -> list[dict]:
+    """Öffentliche YouTube-Suchvorschläge ohne Anmeldung, aus mehreren Suchanfragen gemischt."""
     try:
         from yt_dlp import YoutubeDL
         from yt_dlp.utils import DownloadError
     except ImportError as exc:
         raise RuntimeError("Videosuche fehlt. Bitte requirements.txt installieren.") from exc
 
-    category = category if category in DISCOVERY_CATEGORIES else "all"
+    category = category if category in DISCOVERY_QUERIES else "all"
+    sort = sort if sort in SORT_MODES else "score"
     clean_query = re.sub(r"\s+", " ", query).strip()[:100]
-    search_terms = " ".join(part for part in (clean_query, DISCOVERY_CATEGORIES[category]) if part)
-    limit = max(4, min(20, int(limit)))
-    options = {
-        "extract_flat": True,
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "playlistend": limit,
-        "socket_timeout": 20,
-        "js_runtimes": {"node": {}},
-    }
-    try:
-        with YoutubeDL(options) as downloader:
-            data = downloader.extract_info(f"ytsearch{limit}:{search_terms}", download=False)
-    except DownloadError as exc:
+    limit = max(4, min(36, int(limit)))
+    min_seconds = max(0, int(min_minutes)) * 60
+    max_seconds = max(0, int(max_minutes)) * 60
+    variants = DISCOVERY_QUERIES[category]
+    # Mit eigenem Suchbegriff reichen zwei Varianten; ohne Suchbegriff wird breiter gesucht.
+    terms = [f"{clean_query} {variant}".strip() for variant in (variants[:2] if clean_query else variants)]
+    per_query = max(6, min(25, math.ceil(limit * 1.6 / len(terms))))
+
+    def fetch(search_terms: str) -> list[dict] | None:
+        options = {
+            "extract_flat": True,
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "playlistend": per_query,
+            "socket_timeout": 20,
+            "js_runtimes": {"node": {}},
+        }
+        try:
+            with YoutubeDL(options) as downloader:
+                data = downloader.extract_info(f"ytsearch{per_query}:{search_terms}", download=False)
+        except DownloadError:
+            return None
+        return list((data or {}).get("entries") or [])
+
+    with ThreadPoolExecutor(max_workers=len(terms)) as pool:
+        batches = list(pool.map(fetch, terms))
+    if all(batch is None for batch in batches):
         raise RuntimeError(
             "Die öffentliche Videosuche ist gerade nicht erreichbar. Du kannst weiterhin einen erlaubten Videolink direkt einfügen."
-        ) from exc
+        )
 
     results: list[dict] = []
-    for entry in (data or {}).get("entries") or []:
+    seen_ids: set[str] = set()
+    for entry in (item for batch in batches for item in (batch or [])):
         video_id = str(entry.get("id") or "").strip()
-        title = str(entry.get("title") or "Unbenanntes Video").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", video_id):
+        if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", video_id) or video_id in seen_ids:
             continue
         duration = int(entry.get("duration") or 0)
-        views = int(entry.get("view_count") or 0)
-        lower_title = title.lower()
-        reasons: list[str] = []
-        score = 35.0
-        if 300 <= duration <= 5400:
-            score += 28
-            reasons.append("gute Ausgangslänge")
-        elif 90 <= duration <= 10800:
-            score += 15
-        else:
-            score -= 8
-        hook_hits = sum(1 for term in DISCOVERY_HOOKS if term in lower_title)
-        if hook_hits:
-            score += min(18, hook_hits * 7)
-            reasons.append("starker Titel")
-        if views:
-            score += min(16, max(0, math.log10(max(views, 1)) - 2) * 4)
-            if views >= 100_000:
-                reasons.append("hohe Reichweite")
+        if (min_seconds or max_seconds) and not duration:
+            continue
+        if (min_seconds and duration < min_seconds) or (max_seconds and duration > max_seconds):
+            continue
         if entry.get("live_status") in {"is_live", "is_upcoming"}:
-            score -= 30
+            continue
+        seen_ids.add(video_id)
+        score, reasons = score_entry(entry)
         thumbnails = entry.get("thumbnails") or []
         thumbnail = str((thumbnails[-1] if thumbnails else {}).get("url") or entry.get("thumbnail") or "")
         results.append({
-            "title": title[:180],
+            "id": video_id,
+            "title": str(entry.get("title") or "Unbenanntes Video").strip()[:180],
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "channel": str(entry.get("channel") or entry.get("uploader") or "Unbekannter Kanal")[:100],
             "duration": duration,
-            "views": views,
+            "views": int(entry.get("view_count") or 0),
             "thumbnail": thumbnail,
-            "score": int(max(0, min(99, round(score)))),
-            "reasons": reasons[:3] or ["öffentlich auffindbar"],
+            "score": score,
+            "reasons": reasons,
         })
-    return sorted(results, key=lambda item: item["score"], reverse=True)
+
+    if sort == "views":
+        results.sort(key=lambda item: item["views"], reverse=True)
+    elif sort == "length":
+        results.sort(key=lambda item: item["duration"], reverse=True)
+    else:
+        results.sort(key=lambda item: item["score"], reverse=True)
+        results = _diversify(results)
+    return results[:limit]
 
 
 def download_video(

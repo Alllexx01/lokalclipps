@@ -26,6 +26,8 @@ kopieren, weil Git, Docker-Konfiguration, Tests und Übergabedokumente zusammeng
 
 - `LocalClip/app.py`: Starlette-Routen, Jobs, Login, Aufbewahrung und TikTok-Endpunkte
 - `LocalClip/core.py`: Transkription, Szenenerkennung, Highlight-Scoring, Untertitel und Rendering
+- `LocalClip/reframe.py`: kostenloses Smart-Reframing (YuNet-Gesichtserkennung, Kamerafahrt, ffmpeg-Ausdruck)
+- `LocalClip/models/`: YuNet-Modell `face_detection_yunet_2023mar.onnx` (MIT-Lizenz, 230 KB, wird mit eingecheckt)
 - `LocalClip/downloader.py`: URL-Sicherheit, yt-dlp-Download und öffentlicher Video-Finder
 - `LocalClip/tiktok.py`: TikTok-Konfiguration und Publishing
 - `LocalClip/static/`: responsive Weboberfläche
@@ -47,6 +49,27 @@ kopieren, weil Git, Docker-Konfiguration, Tests und Übergabedokumente zusammeng
    Sport, News und Wissen wurden auf ausdrücklichen Wunsch entfernt.
 9. Pro-Video-Upload von `cookies.txt`; die Datei wird danach auch bei Fehlern gelöscht.
 10. Desktop-Verknüpfung öffnet die produktive Webseite.
+11. Smart-Reframing: 9:16-Ausschnitt folgt dem Sprecher (Gesichtserkennung lokal, kostenlos).
+    Fallback ist das Layout mit unscharfem Hintergrund, z. B. bei Gaming ohne große Gesichter.
+12. Optionen im Formular: Pausen kürzen (Untertitel werden mit umgerechnet) und
+    Titel-Einblendung. Die Optionen stehen in `clips.json`, damit "Untertitel bearbeiten"
+    denselben Look neu rendert. Ältere Projekte ohne Optionen behalten das alte Layout.
+    Der Bildausschnitt hat drei Modi (`auto` = Sprecher folgen, `center` = feste Mitte, `blur`);
+    pro Clip gewählte Optionen stehen in `clips.json` unter `clip_options`.
+    Zoom ist eine Auswahl (`off` Standard, `subtle`, `punch`) und fällt bei einem ffmpeg-Fehler automatisch auf "aus" zurück. Die Clipgrenzen lassen sich auf "nur Sprache" stellen (`snap`).
+13. TikTok-Zugangsdaten werden plattformunabhängig verschlüsselt (Fernet; unter Windows
+    weiter DPAPI) und liegen im Server-Betrieb im Daten-Volume. Die Redirect-URI folgt `LOCALCLIP_DOMAIN`.
+14. Warteschlange: nur ein Auftrag gleichzeitig (`LOCALCLIP_MAX_JOBS`).
+15. Bildunterschriften (`postcopy.py`, Endpunkt `/api/jobs/<id>/clips/<n>/captions`): drei Varianten pro Clip
+    aus Titel, Hook-Satz und Wortlaut; Hashtags aus Hauptwörtern und erkannter Nische (Gaming, Podcast,
+    Comedy, Reaction), deutsch oder englisch je nach Transkript. Rein heuristisch, kein Sprachmodell.
+16. Video-Finder ausgebaut (`downloader.search_public_videos`): bis zu vier Suchanfragen parallel
+    pro Kategorie, Länge-Filter, Sortierung, bis 36 Treffer, Kanal-Vielfalt, Aktualitäts-Bonus.
+    Jobs speichern `source_url`; der Finder markiert damit bereits geclippte Videos. In der
+    Oberfläche lassen sich mehrere Vorschläge auswählen und nacheinander starten; laufende
+    Aufträge erscheinen unter "Letzte Projekte". Der Videotitel aus dem Finder wird Projektname.
+    Hinweis: Die echte YouTube-Suche war in der Entwicklungsumgebung nicht erreichbar; die
+    Logik ist mit einer nachgebauten Suche getestet und sollte einmal live geprüft werden.
 
 ## Sicherheit und Grenzen
 
@@ -81,15 +104,16 @@ Funktion testen. Die Produktions-`.env` nicht überschreiben.
 
 ## Bekannte offene Punkte
 
-- `tiktok.py` enthält Windows-spezifische DPAPI-Nutzung (`ctypes.windll`). Das kann
-  im Linux-Container beim Speichern von TikTok-Zugangsdaten scheitern und sollte
-  durch plattformunabhängige, serverseitige Secret-Verschlüsselung ersetzt werden.
+- Smart-Reframing und Pausen-Kürzen sind mit Testvideos geprüft, aber noch nicht mit
+  mehreren echten langen Videos auf dem 2-GB-Server. Dort Laufzeit und RAM vergleichen.
+- Die TikTok-Redirect-URI des Servers (`https://<LOCALCLIP_DOMAIN>/auth/tiktok/callback`)
+  muss in TikTok for Developers eingetragen werden, bevor Posting auf dem Server klappt.
+- Untertitel: Die Gruppenbreite (29 Zeichen) kann bei Schriftgröße 72 breiter als das Bild werden.
+  Sinnvoll wäre eine Begrenzung nach Schriftgröße.
 - Öffentliche yt-dlp-Suche funktioniert aktuell, kann aber bei Änderungen der
   Plattform ausfallen. Fehler müssen sauber angezeigt werden; keine Umgehung bauen.
 - Ein kompletter realer End-to-End-Test mit mehreren langen Beispielvideos sollte
   Clipgrenzen, Untertitel und RAM-Verbrauch auf dem 2-GB-Server vergleichen.
-- Optional: Job-Warteschlange einführen, damit nicht mehrere Whisper-Prozesse
-  gleichzeitig den kleinen Server überlasten.
 - Optional: CSRF-Schutz für schreibende Web-Endpunkte ergänzen.
 
 ## Letzte wichtige Commits

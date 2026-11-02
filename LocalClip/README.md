@@ -6,15 +6,32 @@ interessante Passagen auswählt und daraus vertikale Short-Clips erstellt.
 ## Aktueller Funktionsumfang
 
 - Video-Upload und Import öffentlicher Video-URLs
-- öffentlicher Video-Finder für Gaming, Podcasts, Reactions und Comedy
-- Finder-Score nach Titel, Videolänge und Reichweite
+- öffentlicher Video-Finder für Gaming, Podcasts, Reactions und Comedy: mehrere Suchanfragen
+  parallel, Filter nach Länge, Sortierung (Eignung, Aufrufe, Länge), "Mehr laden",
+  höchstens zwei Videos pro Kanal in der Spitzengruppe, "Schon geclippt"-Kennzeichnung,
+  Ansehen-Link und Mehrfachauswahl, die mehrere Videos nacheinander in die Warteschlange stellt
+- Finder-Score nach Titel, Videolänge, Reichweite und Aktualität; Shorts, Livestreams und
+  Zusammenschnitte werden abgewertet
 - lokales Speech-to-Text mit `faster-whisper`
 - automatische Highlight-Auswahl nach Hook, Thema, Tempo und Sprechpausen
 - Erkennung visueller Szenenwechsel und daran ausgerichtete Clipgrenzen
 - Clip-Potenzial-Wertung von 0 bis 100 mit Empfehlungen
 - 9:16-Export mit FFmpeg
+- Smart-Reframing: der Bildausschnitt folgt dem Sprecher (kostenlose Gesichtserkennung
+  mit YuNet/OpenCV, komplett offline). Ohne erkennbares Gesicht, etwa bei Gaming,
+  bleibt es beim Layout mit unscharfem Hintergrund
+- Bildausschnitt wählbar: Sprecher folgen, feste Bildmitte oder ganzes Bild mit unscharfem
+  Hintergrund
+- Zoom nur nach Wahl: aus (Standard), dezent (langsame Annäherung) oder betont (kurzer Zoom auf starke Sätze); Untertitel bleiben stehen
+- Clipgrenzen wahlweise an Bildschnitten ausrichten oder nur nach Sprache schneiden
+- optional: lange Sprechpausen und Leerlauf automatisch herausschneiden
+- optional: stärkster Satz als Titel-Einblendung in den ersten Sekunden
+- alle Schnitt-Optionen lassen sich pro Clip nachträglich ändern ("Clip bearbeiten" -> neu rendern)
+- Warteschlange: standardmäßig läuft nur ein Auftrag gleichzeitig (`LOCALCLIP_MAX_JOBS`)
 - lesbare Untertitelgruppen und wortgenaues Karaoke-Highlighting
 - Untertitelstile, Position, Größe und Farben nachträglich anpassbar
+- fertige Bildunterschriften: pro Clip drei Varianten (Frage an die Community, Teaser, kurz) mit
+  wenigen passenden Hashtags aus dem Clip-Inhalt, bearbeitbar und kopierbar, auch im TikTok-Dialog
 - Teilen- und TikTok-Oberfläche
 - automatische Projektbereinigung nach einstellbarer Aufbewahrungszeit
 - HTTPS und langlebiger, signierter Login-Cookie
@@ -49,6 +66,11 @@ LOCALCLIP_USERNAME=...
 LOCALCLIP_PASSWORD=...
 ```
 
+Optional: `LOCALCLIP_SECRET_KEY` (Fernet-Schlüssel für gespeicherte TikTok-Zugangsdaten;
+ohne Angabe wird einmalig ein Schlüssel im Daten-Volume erzeugt) und `LOCALCLIP_MAX_JOBS`
+(gleichzeitige Aufträge, Standard 1). Die TikTok-Rückkehradresse wird aus
+`LOCALCLIP_DOMAIN` gebildet und muss genau so in TikTok for Developers eingetragen sein.
+
 Deployment auf dem Server:
 
 ```bash
@@ -73,6 +95,6 @@ und veröffentlicht werden.
 
 ```powershell
 python -m pytest tests -q
-python -m py_compile app.py core.py downloader.py tiktok.py
+python -m py_compile app.py core.py reframe.py downloader.py tiktok.py
 node --check static/app.js
 ```

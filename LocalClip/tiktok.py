@@ -1,23 +1,32 @@
 from __future__ import annotations
 
 import base64
-import ctypes
 import hashlib
 import json
+import os
 import re
 import secrets
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from ctypes import wintypes
 from pathlib import Path
 
 
 AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 API_ROOT = "https://open.tiktokapis.com"
-REDIRECT_URI = "http://127.0.0.1:8765/auth/tiktok/callback"
+LOCAL_REDIRECT_URI = "http://127.0.0.1:8765/auth/tiktok/callback"
+
+
+def redirect_uri() -> str:
+    """Rückkehr-Adresse für den TikTok-Login: öffentliche Server-Adresse, sonst lokal."""
+    public = os.environ.get("LOCALCLIP_PUBLIC_URL", "").strip().rstrip("/")
+    if not public:
+        domain = os.environ.get("LOCALCLIP_DOMAIN", "").strip()
+        public = f"https://{domain}" if domain else ""
+    return f"{public}/auth/tiktok/callback" if public else LOCAL_REDIRECT_URI
 SCOPES = "user.info.basic,video.publish"
 
 
@@ -25,33 +34,41 @@ class TikTokError(RuntimeError):
     pass
 
 
-class DATA_BLOB(ctypes.Structure):
-    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+FERNET_PREFIX = "fernet:"
 
 
-def _blob(data: bytes) -> tuple[DATA_BLOB, ctypes.Array]:
+def _windows_protect(data: bytes) -> str:
+    """Windows-DPAPI (nur lokal unter Windows; bleibt für bereits gespeicherte Daten erhalten)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class DataBlob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+
     buffer = ctypes.create_string_buffer(data)
-    return DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte))), buffer
-
-
-def _protect(data: bytes) -> str:
-    source, source_buffer = _blob(data)
-    result = DATA_BLOB()
+    source = DataBlob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte)))
+    result = DataBlob()
     if not ctypes.windll.crypt32.CryptProtectData(
-        ctypes.byref(source), "LokalClipps TikTok", None, None, None, 0,
-        ctypes.byref(result),
+        ctypes.byref(source), "LokalClipps TikTok", None, None, None, 0, ctypes.byref(result),
     ):
         raise TikTokError("TikTok-Daten konnten unter Windows nicht sicher gespeichert werden.")
     try:
-        encrypted = ctypes.string_at(result.pbData, result.cbData)
-        return base64.b64encode(encrypted).decode("ascii")
+        return base64.b64encode(ctypes.string_at(result.pbData, result.cbData)).decode("ascii")
     finally:
         ctypes.windll.kernel32.LocalFree(result.pbData)
 
 
-def _unprotect(value: str) -> bytes:
-    source, source_buffer = _blob(base64.b64decode(value))
-    result = DATA_BLOB()
+def _windows_unprotect(value: str) -> bytes:
+    import ctypes
+    from ctypes import wintypes
+
+    class DataBlob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+
+    raw = base64.b64decode(value)
+    buffer = ctypes.create_string_buffer(raw)
+    source = DataBlob(len(raw), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte)))
+    result = DataBlob()
     if not ctypes.windll.crypt32.CryptUnprotectData(
         ctypes.byref(source), None, None, None, None, 0, ctypes.byref(result),
     ):
@@ -62,10 +79,46 @@ def _unprotect(value: str) -> bytes:
         ctypes.windll.kernel32.LocalFree(result.pbData)
 
 
+def _fernet(key_file: Path):
+    """Symmetrische Verschlüsselung für Server/Linux. Schlüssel aus der Umgebung oder dauerhaft im Datenvolume."""
+    from cryptography.fernet import Fernet
+
+    configured = os.environ.get("LOCALCLIP_SECRET_KEY", "").strip()
+    if configured:
+        return Fernet(configured.encode("ascii"))
+    if not key_file.is_file():
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_bytes(Fernet.generate_key())
+        try:
+            key_file.chmod(0o600)
+        except OSError:
+            pass
+    return Fernet(key_file.read_bytes().strip())
+
+
+def _protect(data: bytes, key_file: Path) -> str:
+    if sys.platform == "win32":
+        return _windows_protect(data)
+    return FERNET_PREFIX + _fernet(key_file).encrypt(data).decode("ascii")
+
+
+def _unprotect(value: str, key_file: Path) -> bytes:
+    if value.startswith(FERNET_PREFIX):
+        from cryptography.fernet import InvalidToken
+        try:
+            return _fernet(key_file).decrypt(value[len(FERNET_PREFIX):].encode("ascii"))
+        except InvalidToken as exc:
+            raise TikTokError("Die gespeicherte TikTok-Anmeldung konnte nicht gelesen werden.") from exc
+    if sys.platform != "win32":
+        raise TikTokError("Diese gespeicherte TikTok-Anmeldung stammt von Windows. Bitte erneut einrichten.")
+    return _windows_unprotect(value)
+
+
 class TikTokClient:
     def __init__(self, root: Path):
         self.config_file = root / "tiktok_config.json"
         self.token_file = root / "tiktok_token.dat"
+        self.key_file = root / ".tiktok_secret.key"
         self.pending: dict[str, dict] = {}
 
     def _read_config(self) -> dict:
@@ -74,7 +127,7 @@ class TikTokClient:
         try:
             config = json.loads(self.config_file.read_text(encoding="utf-8"))
             if config.get("client_secret"):
-                config["client_secret"] = _unprotect(config["client_secret"]).decode("utf-8")
+                config["client_secret"] = _unprotect(config["client_secret"], self.key_file).decode("utf-8")
             return config
         except (OSError, ValueError, json.JSONDecodeError, TikTokError):
             return {}
@@ -89,7 +142,7 @@ class TikTokClient:
             client_secret = old.get("client_secret", "")
         if not client_secret:
             raise TikTokError("Bitte den TikTok Client Secret eingeben.")
-        payload = {"client_key": client_key, "client_secret": _protect(client_secret.encode("utf-8"))}
+        payload = {"client_key": client_key, "client_secret": _protect(client_secret.encode("utf-8"), self.key_file)}
         self.config_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return self.status()
 
@@ -97,13 +150,13 @@ class TikTokClient:
         now = int(time.time())
         token["expires_at"] = now + int(token.get("expires_in", 0))
         token["refresh_expires_at"] = now + int(token.get("refresh_expires_in", 0))
-        self.token_file.write_text(_protect(json.dumps(token).encode("utf-8")), encoding="ascii")
+        self.token_file.write_text(_protect(json.dumps(token).encode("utf-8"), self.key_file), encoding="ascii")
 
     def _read_token(self) -> dict:
         if not self.token_file.is_file():
             return {}
         try:
-            return json.loads(_unprotect(self.token_file.read_text(encoding="ascii")).decode("utf-8"))
+            return json.loads(_unprotect(self.token_file.read_text(encoding="ascii"), self.key_file).decode("utf-8"))
         except (OSError, ValueError, json.JSONDecodeError, TikTokError):
             return {}
 
@@ -115,7 +168,7 @@ class TikTokClient:
             "client_key_hint": (config.get("client_key", "")[:5] + "…") if config.get("client_key") else "",
             "connected": bool(token.get("access_token") and token.get("refresh_token")),
             "scope": token.get("scope", ""),
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": redirect_uri(),
         }
 
     def logout(self) -> None:
@@ -134,7 +187,7 @@ class TikTokClient:
             "client_key": config["client_key"],
             "response_type": "code",
             "scope": SCOPES,
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": redirect_uri(),
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
@@ -151,7 +204,7 @@ class TikTokClient:
             "client_secret": config["client_secret"],
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": redirect_uri(),
             "code_verifier": pending["verifier"],
         })
         if not token.get("access_token"):

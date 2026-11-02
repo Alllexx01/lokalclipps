@@ -6,6 +6,7 @@ services:
       LOCALCLIP_DATA_DIR: /var/data
       LOCALCLIP_USERNAME: ${LOCALCLIP_USERNAME}
       LOCALCLIP_PASSWORD: ${LOCALCLIP_PASSWORD}
+      LOCALCLIP_DOMAIN: ${LOCALCLIP_DOMAIN}
     volumes:
       - lokalclipps_data:/var/data
       - model_cache:/root/.cache/huggingface

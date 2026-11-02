@@ -4,10 +4,13 @@ import json
 import math
 import re
 import subprocess
+import textwrap
 import wave
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Iterable
+
+from reframe import center_plan, crop_x_expression, plan_reframe
 
 
 Progress = Callable[[int, str], None]
@@ -445,6 +448,7 @@ def write_ass(
     caption_size: int = 72,
     caption_color: str = "#FFFFFF",
     highlight_color: str = "#FFD400",
+    hook: str = "",
 ) -> None:
     visible = [word for word in words if word.end >= clip.start and word.start <= clip.end]
     groups = _caption_groups(visible)
@@ -471,11 +475,16 @@ WrapStyle: 2
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,Arial,{caption_size},{primary},{secondary},&H00101010,&H96000000,-1,0,0,0,100,100,0,0,{border_style},{outline},{shadow},{alignment},70,70,{margin_v},1
+Style: Hook,Arial,62,&H00FFFFFF,&H00FFFFFF,&H40181818,&H96000000,-1,0,0,0,100,100,0,0,3,12,0,8,70,70,{420 if caption_position == "top" else 250},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
+    if hook.strip():
+        wrapped = "\\N".join(textwrap.wrap(_escape_ass(hook.strip().upper()), width=22, break_long_words=False)[:3])
+        hook_end = min(3.2, max(1.0, clip.duration))
+        lines.append(f"Dialogue: 1,{_ass_time(0.15)},{_ass_time(hook_end)},Hook,,0,0,0,,{{\\fad(180,220)}}{wrapped}\n")
     for group_index, group in enumerate(groups):
         start = max(0.0, group[0].start - clip.start)
         next_group_start = groups[group_index + 1][0].start - clip.start if group_index + 1 < len(groups) else clip.duration
@@ -518,6 +527,279 @@ def render_clip(video: Path, clip: Clip, subtitle: Path | None, output: Path) ->
     ])
 
 
+def has_audio(path: Path) -> bool:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    return bool(result.stdout.strip())
+
+
+def tighten_segments(
+    words: list[Word],
+    clip_start: float,
+    clip_end: float,
+    max_gap: float = 0.7,
+    pad: float = 0.2,
+    min_cut: float = 0.3,
+) -> list[tuple[float, float]]:
+    """Behält nur die gesprochenen Stücke: lange Pausen und Leerlauf am Anfang/Ende fallen weg."""
+    inside = [word for word in words if word.end > clip_start and word.start < clip_end]
+    if len(inside) < 2:
+        return [(clip_start, clip_end)]
+    cuts: list[tuple[float, float]] = []
+    if inside[0].start - clip_start > 1.0:
+        cuts.append((clip_start, inside[0].start - 0.3))
+    for before, after in zip(inside, inside[1:]):
+        if after.start - before.end > max_gap:
+            cut_start, cut_end = before.end + pad, after.start - pad
+            if cut_end - cut_start >= min_cut:
+                cuts.append((cut_start, cut_end))
+    if clip_end - inside[-1].end > 1.0:
+        cuts.append((inside[-1].end + 0.35, clip_end))
+    if not cuts:
+        return [(clip_start, clip_end)]
+    segments: list[tuple[float, float]] = []
+    cursor = clip_start
+    for cut_start, cut_end in cuts:
+        cut_start, cut_end = max(cut_start, clip_start), min(cut_end, clip_end)
+        if cut_start > cursor:
+            segments.append((cursor, cut_start))
+        cursor = max(cursor, cut_end)
+    if cursor < clip_end:
+        segments.append((cursor, clip_end))
+    return [(start, end) for start, end in segments if end - start > 0.05]
+
+
+class Timeline:
+    """Rechnet Zeiten des Originalvideos auf die gekürzte Ausgabe-Zeitleiste um."""
+
+    def __init__(self, segments: list[tuple[float, float]]):
+        self.segments = [(float(start), float(end)) for start, end in segments]
+        self.offsets: list[float] = []
+        total = 0.0
+        for start, end in self.segments:
+            self.offsets.append(total)
+            total += end - start
+        self.duration = total
+
+    def map(self, moment: float) -> float | None:
+        for (start, end), offset in zip(self.segments, self.offsets):
+            if start <= moment <= end:
+                return offset + moment - start
+        return None
+
+
+def remap_words(words: Iterable[Word], timeline: Timeline) -> list[Word]:
+    result: list[Word] = []
+    for word in words:
+        middle = (word.start + word.end) / 2
+        for (start, end), offset in zip(timeline.segments, timeline.offsets):
+            if start <= middle <= end:
+                new_start = offset + max(word.start, start) - start
+                new_end = offset + min(word.end, end) - start
+                if new_end > new_start:
+                    result.append(Word(new_start, new_end, word.text))
+                break
+    return result
+
+
+def make_hook(clip: Clip, max_chars: int = 64) -> str:
+    """Wählt den packendsten Satz des Clips als Einblendung für die ersten Sekunden."""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", clip.transcript) if part.strip()]
+    best, best_score = "", -99.0
+    for index, sentence in enumerate(sentences[:6]):
+        lower = sentence.lower()
+        score = (
+            sum(1 for term in HOOK_TERMS if term in lower) * 2
+            + (2 if "?" in sentence else 0)
+            + (1 if re.search(r"\d", sentence) else 0)
+            - index * 0.3
+            - (3 if len(sentence) < 14 else 0)
+        )
+        if score > best_score:
+            best, best_score = sentence, score
+    text = re.sub(r"\s+", " ", best or clip.title).strip(" -–—,.")
+    if len(text) > max_chars:
+        text = text[:max_chars - 1].rsplit(" ", 1)[0] + "…"
+    return text
+
+
+ZOOM_MODES = ("off", "subtle", "punch")     # kein Zoom / langsame Annäherung / Zoom auf starke Sätze
+
+
+def zoom_events(words: list[Word], duration: float, min_gap: float = 3.5) -> list[float]:
+    """Zeitpunkte (ab Clipstart) für betonte Zooms: Sätze mit Frage, Ausruf oder Hook-Wort."""
+    events: list[float] = []
+    if not words:
+        return events
+    for first, last in _sentence_ranges(words):
+        text = " ".join(word.text for word in words[first:last + 1])
+        lower = text.lower()
+        strong = "?" in text or "!" in text or any(term in lower for term in HOOK_TERMS)
+        moment = words[first].start
+        if not strong or moment < 0.3 or moment > duration - 1.8:
+            continue
+        if events and moment - events[-1] < min_gap:
+            continue
+        events.append(moment)
+    return events[: max(1, int(duration // 4))]
+
+
+def zoom_expression(mode: str, duration: float, events: list[float]) -> str | None:
+    """ffmpeg-Ausdruck für den Zoomfaktor in Abhängigkeit von ``t`` (1.0 = kein Zoom)."""
+    if mode == "subtle" and duration > 0:
+        return f"(1+0.08*clip(t/{duration:.2f},0,1))"
+    if mode == "punch" and events:
+        terms = "".join(
+            f"+0.12*clip((t-{moment:.2f})/0.20,0,1)*clip(({moment + 1.8:.2f}-t)/0.40,0,1)"
+            for moment in events
+        )
+        return f"(1{terms})"
+    return None
+
+
+def build_filtergraph(
+    segments: list[tuple[float, float]],
+    plan: dict | None,
+    subtitle: Path | None,
+    audio: bool,
+    trimmed: bool,
+    zoom: str | None = None,
+) -> tuple[str, list[str]]:
+    """Baut den ffmpeg-Filter: Pausen kürzen -> 9:16 (Gesichts-Ausschnitt oder unscharfer Hintergrund) -> Zoom -> Untertitel."""
+    parts: list[str] = []
+    if trimmed:
+        for index, (start, end) in enumerate(segments):
+            parts.append(f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{index}]")
+            if audio:
+                parts.append(f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
+        joined = "".join(f"[v{index}][a{index}]" if audio else f"[v{index}]" for index in range(len(segments)))
+        parts.append(f"{joined}concat=n={len(segments)}:v=1:a={1 if audio else 0}[vc]" + ("[ac]" if audio else ""))
+        audio_map = ["-map", "[ac]"] if audio else []
+    else:
+        parts.append("[0:v]null[vc]")
+        audio_map = ["-map", "0:a?"]
+
+    if plan:
+        expression = crop_x_expression(plan["keys"])
+        parts.append(f"[vc]crop=w={plan['crop_w']}:h=ih:x='{expression}':y=0,scale=1080:1920:flags=lanczos[lay]")
+    else:
+        parts.append(
+            "[vc]split=2[bgsrc][fgsrc];"
+            "[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+            "gblur=sigma=28:steps=2,eq=brightness=-0.16[bg];"
+            "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2[lay]"
+        )
+    last = "lay"
+    if zoom:
+        parts.append(
+            f"[lay]scale=w='trunc(1080*{zoom}/2)*2':h='trunc(1920*{zoom}/2)*2':eval=frame:flags=bicubic,"
+            "crop=1080:1920:x='(iw-1080)/2':y='(ih-1920)*0.4'[zoomed]"      # Untertitel bleiben beim Zoomen stehen
+        )
+        last = "zoomed"
+    if subtitle is None:
+        parts.append(f"[{last}]null[v]")
+    else:
+        escaped = str(subtitle.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        parts.append(f"[{last}]ass=filename='{escaped}'[v]")
+    return ";".join(parts), ["-map", "[v]", *audio_map]
+
+
+def render_short(
+    video: Path,
+    words: list[Word],
+    clip: Clip,
+    output: Path,
+    subtitle_path: Path,
+    *,
+    caption: dict | None = None,
+    reframe: str = "auto",
+    tighten: bool = False,
+    hook: bool = False,
+    zoom: str = "off",
+    info: dict | None = None,
+    detector=None,
+) -> dict:
+    """Rendert einen fertigen 9:16-Clip mit allen kostenlosen Verbesserungen.
+
+    ``caption`` = {style, position, size, color, highlight} oder ``None`` (ohne Untertitel).
+    Liefert Angaben darüber, was tatsächlich angewendet wurde.
+    """
+    info = info or probe_video(video)
+    segments = tighten_segments(words, clip.start, clip.end) if tighten else [(clip.start, clip.end)]
+    trimmed = len(segments) > 1 or segments[0][0] > clip.start + 0.01 or segments[0][1] < clip.end - 0.01
+    timeline = Timeline(segments)
+    plan = None
+    if reframe == "center":
+        plan = center_plan(info["width"], info["height"])
+    elif reframe == "auto":
+        plan = plan_reframe(
+            video, info["width"], info["height"], clip.start, clip.duration,
+            remap=lambda moment: timeline.map(clip.start + moment) if trimmed else moment,
+            total=timeline.duration if trimmed else clip.duration,
+            detector=detector,
+        )
+
+    subtitle = None
+    hook_text = make_hook(clip) if hook else ""
+    if caption or hook_text:
+        if trimmed:
+            out_words = remap_words(words, timeline)
+            out_clip = Clip(0.0, timeline.duration, clip.score, clip.title, clip.transcript, clip.reasons)
+        else:
+            out_words, out_clip = words, clip
+        options = caption or {}
+        write_ass(
+            out_words if caption else [], out_clip, subtitle_path,
+            options.get("style", "karaoke"), options.get("position", "bottom"),
+            options.get("size", 72), options.get("color", "#FFFFFF"),
+            options.get("highlight", "#FFD400"), hook_text,
+        )
+        subtitle = subtitle_path
+
+    zoom_mode = zoom if zoom in ZOOM_MODES else "off"
+    out_duration = timeline.duration if trimmed else clip.duration
+    zoom_expr = None
+    if zoom_mode != "off":
+        if trimmed:
+            timeline_words = remap_words(words, timeline)
+        else:
+            timeline_words = [
+                Word(word.start - clip.start, word.end - clip.start, word.text)
+                for word in words if word.end > clip.start and word.start < clip.end
+            ]
+        zoom_expr = zoom_expression(zoom_mode, out_duration, zoom_events(timeline_words, out_duration))
+
+    relative = [(start - clip.start, end - clip.start) for start, end in segments]
+    audio = has_audio(video)
+
+    def encode(zoom_factor: str | None) -> None:
+        graph, maps = build_filtergraph(relative, plan, subtitle, audio, trimmed, zoom_factor)
+        run([
+            "ffmpeg", "-y", "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}",
+            "-i", str(video), "-filter_complex", graph, *maps,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(output),
+        ])
+
+    try:
+        encode(zoom_expr)
+    except RuntimeError:
+        if not zoom_expr:
+            raise
+        zoom_expr = None          # Zoom ist Zusatz: lieber ein Clip ohne Zoom als gar kein Clip
+        encode(None)
+    layout = "blur" if not plan else ("center" if reframe == "center" else "face")
+    return {
+        "reframe": layout,
+        "tightened": round(clip.duration - timeline.duration, 1) if trimmed else 0.0,
+        "hook": hook_text,
+        "zoom": zoom_mode if zoom_expr else "off",
+    }
+
+
 def process_video(
     video: Path,
     output_dir: Path,
@@ -533,6 +815,11 @@ def process_video(
     caption_color: str,
     highlight_color: str,
     progress: Progress,
+    reframe: str = "auto",
+    tighten: bool = False,
+    hook: bool = False,
+    snap_scenes: bool = True,
+    zoom: str = "off",
 ) -> tuple[list[dict], dict]:
     output_dir.mkdir(parents=True, exist_ok=True)
     progress(3, "Video wird geprüft")
@@ -549,32 +836,42 @@ def process_video(
     progress(50, "Bildschnitte werden erkannt")
     scene_changes = detect_scene_changes(video)
     progress(55, "Die besten Momente werden gesucht")
-    clips = choose_clips(words, count, min_seconds, max_seconds, focus, scene_changes)
+    clips = choose_clips(words, count, min_seconds, max_seconds, focus, scene_changes if snap_scenes else ())
+    options = {"reframe": reframe, "tighten": bool(tighten), "hook": bool(hook), "zoom": zoom, "snap_scenes": bool(snap_scenes)}
     (output_dir / "clips.json").write_text(
-        json.dumps({"source": video.name, "clips": [asdict(clip) for clip in clips]}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"source": video.name, "options": options, "clips": [asdict(clip) for clip in clips]},
+            ensure_ascii=False, indent=2,
+        ),
         encoding="utf-8",
     )
+    caption = None
+    if caption_style != "none":
+        caption = {
+            "style": caption_style, "position": caption_position, "size": caption_size,
+            "color": caption_color, "highlight": highlight_color,
+        }
     results: list[dict] = []
     for index, clip in enumerate(clips, 1):
-        subtitle = output_dir / f"clip_{index:02d}.ass"
         output = output_dir / f"clip_{index:02d}_score_{clip.score}.mp4"
-        rendered_subtitle = None
-        if caption_style != "none":
-            write_ass(
-                words, clip, subtitle, caption_style, caption_position,
-                caption_size, caption_color, highlight_color,
-            )
-            rendered_subtitle = subtitle
         progress(58 + math.floor(index / max(len(clips), 1) * 39), f"Clip {index} von {len(clips)} wird gerendert")
-        render_clip(video, clip, rendered_subtitle, output)
+        applied = render_short(
+            video, words, clip, output, output_dir / f"clip_{index:02d}.ass",
+            caption=caption, reframe=reframe, tighten=tighten, hook=hook, zoom=zoom, info=video_info,
+        )
         results.append({
             "index": index,
             "filename": output.name,
             "title": clip.title,
             "score": clip.score,
-            "duration": round(clip.duration, 1),
+            "duration": round(clip.duration - applied["tightened"], 1),
             "start": round(clip.start, 1),
             "reasons": clip.reasons,
+            "layout": applied["reframe"],
+            "tightened": applied["tightened"],
+            "hook": applied["hook"],
+            "zoom": applied["zoom"],
+            "options": {"reframe": reframe, "tighten": bool(tighten), "hook": bool(hook), "zoom": zoom},
         })
     analysis = analyze_clip_potential(video_info, words, scene_changes, clips, count, min_seconds)
     (output_dir / "analysis.json").write_text(

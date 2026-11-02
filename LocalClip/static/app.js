@@ -16,6 +16,16 @@ const finderCategory = document.querySelector('#finderCategory');
 const finderSearch = document.querySelector('#finderSearch');
 const finderStatus = document.querySelector('#finderStatus');
 const finderResults = document.querySelector('#finderResults');
+const finderLength = document.querySelector('#finderLength');
+const finderSort = document.querySelector('#finderSort');
+const finderBar = document.querySelector('#finderBar');
+const finderSelected = document.querySelector('#finderSelected');
+const finderQueue = document.querySelector('#finderQueue');
+const finderMore = document.querySelector('#finderMore');
+const videoTitle = document.querySelector('#videoTitle');
+const finderSelection = new Map();
+let finderLimit = 12;
+let recentTimer = null;
 const recentPanel = document.querySelector('#recentPanel');
 const recentGrid = document.querySelector('#recentGrid');
 const retentionDays = document.querySelector('#retentionDays');
@@ -41,6 +51,7 @@ const tiktokSetupStatus = document.querySelector('#tiktokSetupStatus');
 const tiktokPostStatus = document.querySelector('#tiktokPostStatus');
 let currentJobId = null;
 let currentClipIndex = null;
+let currentClips = [];
 let recentJobs = new Map();
 let tiktokState = {configured:false, connected:false};
 let activeTikTokClip = null;
@@ -54,6 +65,7 @@ cookieBrowser.addEventListener('change', () => {
 });
 
 async function loadRecentJobs() {
+  clearTimeout(recentTimer);
   try {
     const response = await fetch('/api/jobs');
     const data = await response.json();
@@ -61,16 +73,19 @@ async function loadRecentJobs() {
     retentionDays.value = data.retention_days;
     retentionLabel.textContent = `${data.retention_days} ${data.retention_days === 1 ? 'Tag' : 'Tage'}`;
     const finished = data.jobs.filter(job => job.status === 'done' && job.clips?.length);
+    const active = data.jobs.filter(job => ['queued', 'running'].includes(job.status));
     recentJobs = new Map(finished.map(job => [job.id, job]));
     if (!setupPanel.classList.contains('hidden')) recentPanel.classList.remove('hidden');
-    if (!finished.length) {
+    if (!finished.length && !active.length) {
       recentGrid.innerHTML = '<p class="recent-empty">Noch keine fertigen Projekte. Dein nächster Auftrag erscheint automatisch hier.</p>';
       return;
     }
-    recentGrid.innerHTML = finished.map(job => {
+    const activeCards = active.map(job => `<article class="recent-progress"><h3>${escapeHtml(job.name || 'Video-Projekt')}</h3><div class="recent-meta"><span>${job.status === 'queued' ? 'Wartet' : 'Wird verarbeitet'}</span><span>${Number(job.progress || 0)} %</span></div><div class="recent-empty" style="padding:0">${escapeHtml(job.message || '')}</div><div class="bar"><i style="width:${Number(job.progress || 0)}%"></i></div></article>`);
+    const finishedCards = finished.map(job => {
       const date = new Date((job.updated_at || job.created_at) * 1000).toLocaleString('de-DE', {dateStyle:'medium', timeStyle:'short'});
       return `<article class="recent-card"><h3>${escapeHtml(job.name || 'Video-Projekt')}</h3><div class="recent-meta"><span>${job.clips.length} Clips</span><span>${date}</span></div><button class="recent-open" data-job-id="${job.id}">Projekt öffnen</button></article>`;
-    }).join('');
+    });
+    recentGrid.innerHTML = [...activeCards, ...finishedCards].join('');
     document.querySelectorAll('.recent-open').forEach(button => button.addEventListener('click', () => {
       const job = recentJobs.get(button.dataset.jobId);
       if (!job) return;
@@ -80,6 +95,7 @@ async function loadRecentJobs() {
       showResults(job.clips, job.id, job.analysis);
       resultsPanel.scrollIntoView({behavior:'smooth'});
     }));
+    if (active.length) recentTimer = setTimeout(loadRecentJobs, 6000);
   } catch (error) {
     if (!setupPanel.classList.contains('hidden')) recentPanel.classList.remove('hidden');
     recentGrid.innerHTML = `<p class="recent-empty">${escapeHtml(error.message)}</p>`;
@@ -118,50 +134,113 @@ function updateCaptionPreview() {
 captionEnabled.addEventListener('change', () => { captionPreview.style.opacity = captionEnabled.checked ? '1' : '.35'; });
 updateCaptionPreview();
 
-finderSearch.addEventListener('click', async () => {
+function updateFinderBar() {
+  const count = finderSelection.size;
+  finderSelected.textContent = count ? `${count} ${count === 1 ? 'Video' : 'Videos'} ausgewählt` : 'Nichts ausgewählt';
+  finderQueue.disabled = count === 0;
+  finderQueue.textContent = count > 1 ? `${count} Videos nacheinander clippen` : 'Ausgewähltes Video clippen';
+}
+
+async function runFinder(limit) {
+  finderLimit = limit;
   finderSearch.disabled = true;
+  finderMore.disabled = true;
   finderStatus.textContent = 'Öffentliche Videos werden durchsucht und bewertet …';
-  finderResults.innerHTML = '';
+  if (limit <= 12) finderSelection.clear();
   try {
-    const params = new URLSearchParams({q:finderQuery.value.trim(), category:finderCategory.value});
+    const [minMinutes, maxMinutes] = (finderLength.value || '0-0').split('-').map(Number);
+    const params = new URLSearchParams({
+      q: finderQuery.value.trim(), category: finderCategory.value, limit: String(limit),
+      sort: finderSort.value, min_minutes: String(minMinutes), max_minutes: String(maxMinutes)
+    });
     const response = await fetch(`/api/discover?${params}`);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Videosuche fehlgeschlagen');
     const results = data.results || [];
-    finderStatus.textContent = results.length ? `${results.length} Vorschläge gefunden.` : 'Keine passenden Vorschläge gefunden. Versuche einen anderen Suchbegriff.';
+    finderStatus.textContent = results.length ? `${results.length} Vorschläge gefunden. Du kannst mehrere auswählen und nacheinander clippen lassen.` : 'Keine passenden Vorschläge gefunden. Versuche einen anderen Suchbegriff oder eine andere Länge.';
     finderResults.innerHTML = results.map(video => {
       const minutes = video.duration ? `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')} Min.` : 'Länge unbekannt';
       const views = video.views ? `${new Intl.NumberFormat('de-DE', {notation:'compact'}).format(video.views)} Aufrufe` : 'Aufrufe unbekannt';
-      return `<article class="finder-card">
+      const attributes = `data-url="${escapeAttribute(video.url)}" data-title="${escapeAttribute(video.title)}"`;
+      return `<article class="finder-card${video.already_used ? ' used' : ''}">
+        ${video.already_used ? `<span class="finder-used${video.thumbnail ? '' : ' inline'}">Schon geclippt</span>` : ''}
         ${video.thumbnail ? `<img loading="lazy" src="${escapeAttribute(video.thumbnail)}" alt="">` : ''}
         <div class="finder-card-body"><h3>${escapeHtml(video.title)}</h3>
         <div class="finder-card-meta">${escapeHtml(video.channel)} · ${minutes} · ${views}</div>
         <div class="finder-score">Finder-Score ${Number(video.score || 0)}</div>
         <p class="finder-reasons">${(video.reasons || []).map(escapeHtml).join(' · ')}</p>
-        <button class="finder-use" type="button" data-url="${escapeAttribute(video.url)}">Dieses Video clippen</button></div>
+        <div class="finder-actions">
+          <label class="finder-pick"><input type="checkbox" class="finder-check" ${attributes} ${finderSelection.has(video.url) ? 'checked' : ''}> Auswählen</label>
+          <a class="finder-watch" href="${escapeAttribute(video.url)}" target="_blank" rel="noopener noreferrer">Ansehen ↗</a>
+        </div>
+        <button class="finder-use" type="button" ${attributes} style="margin-top:8px">Dieses Video clippen</button></div>
       </article>`;
     }).join('');
+    document.querySelectorAll('.finder-check').forEach(box => box.addEventListener('change', () => {
+      if (box.checked) finderSelection.set(box.dataset.url, box.dataset.title);
+      else finderSelection.delete(box.dataset.url);
+      updateFinderBar();
+    }));
     document.querySelectorAll('.finder-use').forEach(button => button.addEventListener('click', () => {
       urlInput.value = button.dataset.url;
+      videoTitle.value = button.dataset.title || '';
       fileInput.value = '';
       fileLabel.textContent = 'Video hier ablegen oder auswählen';
       finderStatus.textContent = 'Video übernommen. Prüfe die Einstellungen und starte „Clips erstellen“.';
       setupPanel.scrollIntoView({behavior:'smooth', block:'start'});
     }));
+    finderBar.classList.toggle('hidden', !results.length);
+    finderMore.disabled = results.length < limit || limit >= 36;
+    updateFinderBar();
   } catch (error) {
     finderStatus.textContent = error.message;
   } finally {
     finderSearch.disabled = false;
   }
+}
+
+finderSearch.addEventListener('click', () => runFinder(12));
+finderMore.addEventListener('click', () => runFinder(Math.min(36, finderLimit + 12)));
+
+finderQueue.addEventListener('click', async () => {
+  const items = [...finderSelection.entries()];
+  if (!items.length) return;
+  finderQueue.disabled = true;
+  let started = 0;
+  let lastError = '';
+  for (const [index, [url, title]] of items.entries()) {
+    finderStatus.textContent = `Auftrag ${index + 1} von ${items.length} wird gestartet …`;
+    const body = new FormData(form);
+    body.delete('video');
+    body.set('url', url);
+    body.set('title', title);
+    try {
+      const response = await fetch('/api/jobs', {method:'POST', body});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Auftrag konnte nicht gestartet werden');
+      started += 1;
+    } catch (error) { lastError = error.message; }
+  }
+  finderSelection.clear();
+  document.querySelectorAll('.finder-check').forEach(box => { box.checked = false; });
+  updateFinderBar();
+  finderStatus.textContent = started
+    ? `${started} ${started === 1 ? 'Auftrag läuft' : 'Aufträge laufen'} nacheinander. Fertige Projekte erscheinen unten unter „Letzte Projekte“.${lastError ? ` Fehler bei einem Video: ${lastError}` : ''}`
+    : lastError;
+  recentPanel.classList.remove('hidden');
+  loadRecentJobs();
+  recentPanel.scrollIntoView({behavior:'smooth', block:'start'});
 });
 
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) {
     fileLabel.textContent = fileInput.files[0].name;
     urlInput.value = '';
+    videoTitle.value = '';
   }
 });
 urlInput.addEventListener('input', () => {
+  videoTitle.value = '';
   if (urlInput.value.trim()) {
     fileInput.value = '';
     fileLabel.textContent = 'Video hier ablegen oder auswählen';
@@ -215,8 +294,18 @@ async function poll(id) {
   } catch (error) { showError(error.message); }
 }
 
+function clipBadges(clip) {
+  const layouts = {face:'Sprecher-Tracking', center:'Feste Bildmitte', blur:'Unscharfer Hintergrund'};
+  return `<span class="badge score">Score ${clip.score}</span><span class="badge">${clip.duration} Sek.</span><span class="badge">ab ${clip.start} Sek.</span>`
+    + (layouts[clip.layout] ? `<span class="badge">${layouts[clip.layout]}</span>` : '')
+    + (clip.tightened > 0 ? `<span class="badge">−${clip.tightened} Sek. Pausen</span>` : '')
+    + (clip.hook ? '<span class="badge">Titel</span>' : '')
+    + (clip.zoom === 'subtle' ? '<span class="badge">Zoom: dezent</span>' : clip.zoom === 'punch' ? '<span class="badge">Zoom: betont</span>' : '');
+}
+
 function showResults(clips, jobId, analysis = null) {
   currentJobId = jobId;
+  currentClips = clips;
   recentPanel.classList.add('hidden');
   progressPanel.classList.add('hidden');
   resultsPanel.classList.remove('hidden');
@@ -243,18 +332,66 @@ function showResults(clips, jobId, analysis = null) {
       <video controls preload="metadata" src="${clip.url}"></video>
       <div class="clip-info">
         <h3>${escapeHtml(clip.title)}</h3>
-        <div class="clip-meta"><span class="badge score">Score ${clip.score}</span><span class="badge">${clip.duration} Sek.</span><span class="badge">ab ${clip.start} Sek.</span></div>
+        <div class="clip-meta">${clipBadges(clip)}</div>
         <p class="clip-reasons">${(clip.reasons || []).map(escapeHtml).join(' · ')}</p>
-        <button class="edit-captions" data-index="${clip.index}">Untertitel bearbeiten</button>
+        <button class="edit-captions" data-index="${clip.index}">Clip bearbeiten (Schnitt &amp; Untertitel)</button>
+        <button class="ideas-clip" data-index="${clip.index}">Bildunterschriften vorschlagen</button>
         <button class="share-clip" data-index="${clip.index}">↗ Teilen / TikTok</button>
         <button class="post-tiktok" data-index="${clip.index}">Auf TikTok posten</button>
         <a class="download" href="${clip.url}" download>MP4 herunterladen</a>
       </div>
     </article>`).join('');
   document.querySelectorAll('.edit-captions').forEach(button => button.addEventListener('click', () => openCaptionEditor(Number(button.dataset.index))));
+  document.querySelectorAll('.ideas-clip').forEach(button => button.addEventListener('click', () => openCaptionIdeas(Number(button.dataset.index))));
   document.querySelectorAll('.share-clip').forEach(button => button.addEventListener('click', () => shareClip(clips.find(clip => clip.index === Number(button.dataset.index)), button)));
   document.querySelectorAll('.post-tiktok').forEach(button => button.addEventListener('click', () => openTikTokPost(clips.find(clip => clip.index === Number(button.dataset.index)))));
 }
+
+const ideaCache = new Map();
+
+async function fetchCaptionIdeas(index) {
+  const key = `${currentJobId}-${index}`;
+  if (!ideaCache.has(key)) {
+    const response = await fetch(`/api/jobs/${currentJobId}/clips/${index}/captions`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Vorschläge konnten nicht geladen werden');
+    ideaCache.set(key, data.variants || []);
+  }
+  return ideaCache.get(key);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (error) {
+    const helper = document.createElement('textarea');
+    helper.value = text;
+    document.body.appendChild(helper);
+    helper.select();
+    document.execCommand('copy');
+    helper.remove();
+  }
+}
+
+async function openCaptionIdeas(index) {
+  const dialog = document.querySelector('#ideasDialog');
+  const list = document.querySelector('#ideasList');
+  list.innerHTML = '<p class="tiktok-status">Wird geladen …</p>';
+  dialog.showModal();
+  try {
+    const variants = await fetchCaptionIdeas(index);
+    list.innerHTML = variants.map((variant, position) => `<section class="idea"><h4>${escapeHtml(variant.name)}</h4><textarea data-idea="${position}">${escapeHtml(variant.text)}</textarea><button type="button" data-copy="${position}">Kopieren</button></section>`).join('');
+    list.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', async () => {
+      await copyText(list.querySelector(`[data-idea="${button.dataset.copy}"]`).value);
+      button.textContent = '✓ Kopiert';
+      setTimeout(() => button.textContent = 'Kopieren', 1800);
+    }));
+  } catch (error) {
+    list.innerHTML = `<p class="tiktok-status">${escapeHtml(error.message)}</p>`;
+  }
+}
+document.querySelector('#closeIdeas').addEventListener('click', () => document.querySelector('#ideasDialog').close());
+document.querySelector('#ideasDone').addEventListener('click', () => document.querySelector('#ideasDialog').close());
 
 async function shareClip(clip, button) {
   const originalLabel = '↗ Teilen / TikTok';
@@ -304,9 +441,15 @@ async function shareClip(clip, button) {
 
 function openCaptionEditor(index) {
   currentClipIndex = index;
+  const clip = currentClips.find(item => item.index === index) || {};
+  const options = clip.options || {};
+  document.querySelector('#editReframe').value = options.reframe || 'blur';
+  document.querySelector('#editTighten').checked = Boolean(options.tighten);
+  document.querySelector('#editHook').checked = Boolean(options.hook);
+  document.querySelector('#editZoom').value = options.zoom || 'off';
   renderStatus.textContent = '';
   renderCaptionButton.disabled = false;
-  renderCaptionButton.textContent = 'Clip mit Untertiteln rendern';
+  renderCaptionButton.textContent = 'Clip neu rendern';
   captionDialog.showModal();
 }
 
@@ -329,12 +472,21 @@ renderCaptionButton.addEventListener('click', async () => {
         position: captionPosition.value,
         size: Number(captionSize.value),
         text_color: captionColor.value,
-        highlight_color: highlightColor.value
+        highlight_color: highlightColor.value,
+        reframe: document.querySelector('#editReframe').value,
+        tighten: document.querySelector('#editTighten').checked,
+        hook: document.querySelector('#editHook').checked,
+        zoom: document.querySelector('#editZoom').value
       })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Rendern fehlgeschlagen');
     const card = document.querySelector(`[data-clip-index="${currentClipIndex}"]`);
+    const current = currentClips.find(item => item.index === currentClipIndex);
+    if (current && data.clip) {
+      Object.assign(current, data.clip);          // Teilen/TikTok greifen danach auf die neue Datei zu
+      card.querySelector('.clip-meta').innerHTML = clipBadges(current);
+    }
     const video = card.querySelector('video');
     video.src = `${data.url}?v=${Date.now()}`;
     video.load();
@@ -355,6 +507,7 @@ async function loadTikTokStatus() {
   try {
     const response = await fetch('/api/tiktok/settings');
     tiktokState = await response.json();
+    if (tiktokState.redirect_uri) document.querySelector('#tiktokRedirectUri').value = tiktokState.redirect_uri;
     tiktokDot.classList.toggle('online', Boolean(tiktokState.connected));
     tiktokSetupStatus.innerHTML = tiktokState.connected
       ? '<span class="tiktok-connected">✓ TikTok ist verbunden und bereit zum Posten.</span>'
@@ -435,6 +588,18 @@ async function openTikTokPost(clip) {
     if (comments.disabled) comments.checked = false;
     if (duet.disabled) duet.checked = false;
     if (stitch.disabled) stitch.checked = false;
+    const ideaBox = document.querySelector('#ideaPackages');
+    ideaBox.innerHTML = '';
+    try {
+      (await fetchCaptionIdeas(clip.index)).forEach(variant => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'hashtag-package';
+        button.textContent = variant.name;
+        button.addEventListener('click', () => { document.querySelector('#tiktokCaption').value = variant.text.slice(0, 2200); });
+        ideaBox.appendChild(button);
+      });
+    } catch (error) { /* Vorschläge sind optional */ }
     const packageBox = document.querySelector('#hashtagPackages');
     (hashtags.packages || []).forEach(item => {
       const button = document.createElement('button');
