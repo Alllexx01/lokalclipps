@@ -266,13 +266,13 @@ def download_video(
         message = str(exc)
         if "not a bot" in message.lower() or "sign in to confirm" in message.lower():
             raise RuntimeError(
-                "YouTube verlangt eine Anmeldung. Öffne beim Link-Import ‚YouTube-Anmeldung‘ "
-                "und wähle Firefox, Chrome, Edge oder eine cookies.txt-Datei."
+                "YouTube hat den automatischen Abruf blockiert. Speichere das Video auf deinem "
+                "Handy und wähle es oben über ‚Video auswählen‘ aus – Cookies werden nicht benötigt."
             ) from exc
         if "cookie" in message.lower() or "decrypt" in message.lower():
             raise RuntimeError(
-                "Der Browser-Login konnte nicht gelesen werden. Firefox oder eine exportierte "
-                "cookies.txt-Datei funktioniert unter Windows meist zuverlässiger."
+                "Die Plattform verlangt eine Anmeldung. Speichere dein Video auf dem Handy und "
+                "lade die Videodatei direkt hoch – Zugangsdaten werden nicht benötigt."
             ) from exc
         raise RuntimeError(f"Der Videodownload ist fehlgeschlagen: {message}") from exc
 

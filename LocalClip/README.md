@@ -81,12 +81,12 @@ docker compose up -d --build
 
 `render.yaml` ist nur eine frühere, derzeit nicht verwendete Alternative.
 
-## Cookies und Videoquellen
+## Videoquellen am Handy
 
-Der Video-Finder arbeitet ohne Benutzer-Cookies. Manche Plattformen verlangen
-beim eigentlichen Download trotzdem eine Anmeldung. Eine hochgeladene
-`cookies.txt` wird nur für den jeweiligen Download benutzt und anschließend
-auch im Fehlerfall gelöscht. Plattform-Sperren werden nicht umgangen.
+Der Video-Finder und öffentliche Links arbeiten ohne Benutzer-Cookies. Falls eine
+Plattform den automatischen Abruf blockiert, kann die Videodatei direkt über die
+große Dateiauswahl hochgeladen werden. LocalClip fordert keine YouTube-Sitzungsdatei
+und keine YouTube-Zugangsdaten an. Plattform-Sperren werden nicht umgangen.
 
 Es dürfen nur eigene Videos oder Inhalte mit entsprechender Erlaubnis verarbeitet
 und veröffentlicht werden.

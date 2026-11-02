@@ -24,7 +24,6 @@
     .url-box input{border:0;outline:0;background:transparent;color:#fff;font-size:15px;width:100%;height:34px}
     .url-box input::placeholder{color:#666b78}
     .source-note{display:block;color:#777b87;margin:9px 4px 0;font-size:12px}
-    .auth-options{margin-top:12px;border:1px solid #2b2f39;border-radius:12px;background:#0d0f14;color:#aeb2bd}.auth-options summary{cursor:pointer;padding:12px 14px;font-size:13px;font-weight:800;color:#d8dae1}.auth-body{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 14px 14px}.auth-body label{color:#8d919d;font-size:12px;font-weight:700}.auth-body select,.cookie-file{display:block;width:100%;height:40px;margin-top:6px;border:1px solid #292d37;border-radius:9px;background:#171a22;color:#fff;padding:8px}.auth-hint{grid-column:1/-1;color:#737783;font-size:11px;line-height:1.45;margin:0}.auth-hint strong{color:#ff8c93}
     .focus-box{display:block;margin-top:18px;color:#9b9fac;font-size:12px;font-weight:700}
     .focus-box input{width:100%;height:48px;margin-top:7px;border:1px solid #292d37;border-radius:12px;background:#0d0f14;color:#fff;padding:0 14px;outline:0}
     .focus-box input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px #8b5cf622}
@@ -133,20 +132,7 @@
           <input id="videoUrl" name="url" type="url" inputmode="url" placeholder="YouTube-, Twitch-, TikTok- oder andere Video-URL">
         </label>
         <input id="videoTitle" name="title" type="hidden">
-        <small class="source-note">Öffentlich erreichbare Videos werden zuerst lokal heruntergeladen. Playlists werden nicht übernommen.</small>
-        <details class="auth-options">
-          <summary>YouTube verlangt eine Anmeldung oder meldet eine Bot-Prüfung?</summary>
-          <div class="auth-body">
-            <label>Vorhandenen Browser-Login verwenden
-              <select name="cookie_browser" id="cookieBrowser"><option value="none">Keine Anmeldung</option><option value="firefox">Firefox – empfohlen</option><option value="chrome">Chrome</option><option value="edge">Edge</option></select>
-            </label>
-            <label>Oder cookies.txt auswählen
-              <input class="cookie-file" name="cookies_file" id="cookiesFile" type="file" accept=".txt,text/plain">
-            </label>
-            <p class="auth-hint">Noch keine Datei? <a class="cookie-help-link" href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc?hl=de" target="_blank" rel="noopener noreferrer">Empfohlene Chrome-Erweiterung öffnen</a>. Danach auf YouTube im Erweiterungsmenü im <strong>Netscape-Format</strong> exportieren.</p>
-            <p class="auth-hint"><strong>Bleibt lokal:</strong> Die Datei wird nur für den Download verwendet und danach sofort gelöscht. Chrome/Edge können unter Windows durch die Cookie-Verschlüsselung scheitern; Firefox ist zuverlässiger.</p>
-          </div>
-        </details>
+        <small class="source-note">Öffentliche Links verarbeitet LocalClip automatisch – auch am Handy ohne Cookie-Datei. Falls eine Plattform den Abruf sperrt, kannst du das Video oben direkt auswählen.</small>
 
         <label class="focus-box">Wonach soll die Clipsuche suchen? <span style="font-weight:400">(optional)</span>
           <input name="focus" type="text" maxlength="240" placeholder="z. B. lustige Momente, Polizei, Streit, überraschende Aussagen">
@@ -197,8 +183,7 @@
       <strong id="progressPercent">0 %</strong>
       <small>Die Verarbeitung läuft lokal. Dieses Fenster bitte geöffnet lassen.</small>
       <div class="progress-help" id="progressHelp">
-        <a class="secondary" href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc?hl=de" target="_blank" rel="noopener noreferrer">Cookie-Erweiterung öffnen</a>
-        <button class="secondary" id="retryJob" type="button">Neues Video versuchen</button>
+        <button class="secondary" id="retryJob" type="button">Videodatei auswählen</button>
       </div>
     </section>
 

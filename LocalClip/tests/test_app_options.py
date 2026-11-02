@@ -132,3 +132,12 @@ def test_caption_suggestions_endpoint(client_and_job):
     assert client.get(f"/api/jobs/{job_id}/clips/9/captions").status_code == 404
     assert client.get(f"/api/jobs/{job_id}/clips/0/captions").status_code == 404
     assert client.get("/api/jobs/ffffffffffff/clips/1/captions").status_code == 404
+
+
+def test_mobile_page_does_not_request_youtube_cookies(client_and_job):
+    client, _, _ = client_and_job
+    page = client.get("/").text
+    assert "cookies_file" not in page
+    assert "cookieBrowser" not in page
+    assert "Cookie-Erweiterung" not in page
+    assert "ohne Cookie-Datei" in page

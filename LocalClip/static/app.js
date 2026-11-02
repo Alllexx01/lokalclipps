@@ -37,8 +37,6 @@ const captionPosition = document.querySelector('#captionPosition');
 const captionSize = document.querySelector('#captionSize');
 const captionColor = document.querySelector('#captionColor');
 const highlightColor = document.querySelector('#highlightColor');
-const cookieBrowser = document.querySelector('#cookieBrowser');
-const cookiesFile = document.querySelector('#cookiesFile');
 const captionDialog = document.querySelector('#captionDialog');
 const captionEnabled = document.querySelector('#captionEnabled');
 const renderStatus = document.querySelector('#renderStatus');
@@ -56,13 +54,6 @@ let recentJobs = new Map();
 let tiktokState = {configured:false, connected:false};
 let activeTikTokClip = null;
 const shareFileCache = new Map();
-
-cookiesFile.addEventListener('change', () => {
-  if (cookiesFile.files[0]) cookieBrowser.value = 'none';
-});
-cookieBrowser.addEventListener('change', () => {
-  if (cookieBrowser.value !== 'none') cookiesFile.value = '';
-});
 
 async function loadRecentJobs() {
   clearTimeout(recentTimer);

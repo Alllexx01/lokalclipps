@@ -198,11 +198,7 @@ async def create_job(request):
     cleanup_expired_jobs()
     form = await request.form()
     upload = form.get("video")
-    cookie_upload = form.get("cookies_file")
     video_url = str(form.get("url", "")).strip()
-    cookie_browser = str(form.get("cookie_browser", "none")).lower()
-    if cookie_browser not in {"none", "chrome", "edge", "firefox"}:
-        cookie_browser = "none"
     has_upload = bool(upload and getattr(upload, "filename", ""))
     if not has_upload and not video_url:
         return JSONResponse({"error": "Bitte ein Video auswählen oder eine Video-URL eingeben."}, status_code=400)
@@ -216,20 +212,11 @@ async def create_job(request):
     job_dir = DATA / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     video = None
-    cookie_file = None
     if has_upload:
         suffix = Path(upload.filename).suffix.lower() or ".mp4"
         video = job_dir / f"source{suffix}"
         with video.open("wb") as target:
             shutil.copyfileobj(upload.file, target, length=1024 * 1024)
-    elif cookie_upload and getattr(cookie_upload, "filename", ""):
-        cookie_file = job_dir / "youtube_cookies.txt"
-        with cookie_file.open("wb") as target:
-            shutil.copyfileobj(cookie_upload.file, target, length=256 * 1024)
-        if cookie_file.stat().st_size > 5 * 1024 * 1024:
-            cookie_file.unlink(missing_ok=True)
-            shutil.rmtree(job_dir, ignore_errors=True)
-            return JSONResponse({"error": "Die cookies.txt-Datei ist ungewöhnlich groß."}, status_code=400)
 
     try:
         settings = {
@@ -251,8 +238,6 @@ async def create_job(request):
             "zoom": str(form.get("zoom", "off")),
         }
     except ValueError:
-        if cookie_file:
-            cookie_file.unlink(missing_ok=True)
         shutil.rmtree(job_dir, ignore_errors=True)
         return JSONResponse({"error": "Ungültige Einstellungen."}, status_code=400)
     if settings["max_seconds"] <= settings["min_seconds"]:
@@ -295,17 +280,11 @@ async def create_job(request):
             update_job(job_id, status="running", message="Wird verarbeitet")
             source_video = video
             if source_video is None:
-                try:
-                    source_video = download_video(
-                        video_url,
-                        job_dir,
-                        lambda percent, message: update_job(job_id, progress=percent, message=message),
-                        cookie_browser=cookie_browser,
-                        cookie_file=cookie_file,
-                    )
-                finally:
-                    if cookie_file:
-                        cookie_file.unlink(missing_ok=True)
+                source_video = download_video(
+                    video_url,
+                    job_dir,
+                    lambda percent, message: update_job(job_id, progress=percent, message=message),
+                )
             results, analysis = process_video(
                 video=source_video,
                 output_dir=job_dir,
