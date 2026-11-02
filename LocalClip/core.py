@@ -345,6 +345,97 @@ def _caption_groups(words: Iterable[Word]) -> list[list[Word]]:
     return balanced
 
 
+def analyze_clip_potential(
+    video_info: dict,
+    words: list[Word],
+    scene_changes: list[float],
+    clips: list[Clip],
+    requested_count: int,
+    min_seconds: int,
+) -> dict:
+    """Rate whether a source is likely to produce useful short-form clips."""
+    duration = max(0.1, float(video_info.get("duration", 0.1)))
+    minutes = duration / 60.0
+    words_per_minute = len(words) / max(minutes, 0.01)
+    spoken_seconds = sum(max(0.0, min(word.end, duration) - max(word.start, 0.0)) for word in words)
+    speech_coverage = min(1.0, spoken_seconds / duration)
+    scene_rate = len(scene_changes) / max(minutes, 0.01)
+    average_clip_score = sum(clip.score for clip in clips) / max(len(clips), 1)
+
+    duration_points = min(15.0, duration / max(60.0, min_seconds * 2.0) * 15.0)
+    if 75 <= words_per_minute <= 205:
+        speech_points = 25.0
+    elif words_per_minute < 75:
+        speech_points = max(0.0, words_per_minute / 75.0 * 25.0)
+    else:
+        speech_points = max(8.0, 25.0 - (words_per_minute - 205.0) * 0.12)
+    coverage_points = min(15.0, speech_coverage / 0.28 * 15.0)
+    if 0.5 <= scene_rate <= 14:
+        visual_points = 15.0
+    elif scene_rate < 0.5:
+        visual_points = 5.0 + scene_rate / 0.5 * 10.0
+    else:
+        visual_points = max(7.0, 15.0 - (scene_rate - 14.0) * 0.35)
+    highlight_points = max(0.0, min(20.0, (average_clip_score - 55.0) / 40.0 * 20.0)) if clips else 0.0
+    result_points = min(10.0, len(clips) / max(requested_count, 1) * 10.0)
+    score = int(round(max(0.0, min(100.0, duration_points + speech_points + coverage_points + visual_points + highlight_points + result_points))))
+
+    if score >= 80:
+        label = "Sehr gutes Clip-Potenzial"
+        verdict = "Dieses Video eignet sich sehr gut für kurze Social-Media-Clips."
+    elif score >= 65:
+        label = "Gut geeignet"
+        verdict = "Dieses Video bietet mehrere brauchbare Momente zum Clippen."
+    elif score >= 45:
+        label = "Bedingt geeignet"
+        verdict = "Clips sind möglich, benötigen aber wahrscheinlich etwas Nachbearbeitung."
+    else:
+        label = "Eher ungeeignet"
+        verdict = "Das Material liefert momentan nur wenige klare Short-Clip-Momente."
+
+    strengths: list[str] = []
+    recommendations: list[str] = []
+    if duration >= max(60, min_seconds * 2):
+        strengths.append("genug Ausgangsmaterial")
+    else:
+        recommendations.append("Ein längeres Ausgangsvideo liefert mehr vollständige Momente.")
+    if 75 <= words_per_minute <= 205:
+        strengths.append("gut verständliches Sprechtempo")
+    elif words_per_minute < 55:
+        recommendations.append("Videos mit mehr zusammenhängender Sprache sind leichter automatisch zu clippen.")
+    else:
+        recommendations.append("Sehr schnelles Sprechen kann zusätzliche Untertitelkorrekturen benötigen.")
+    if speech_coverage >= 0.22:
+        strengths.append("hoher Sprachanteil")
+    if 0.5 <= scene_rate <= 14:
+        strengths.append("erkennbare Bildwechsel")
+    elif scene_rate < 0.5:
+        recommendations.append("Wenig Bildwechsel: Für Talking-Head-Videos funktionieren zusätzliche B-Rolls besonders gut.")
+    else:
+        recommendations.append("Sehr viele schnelle Schnitte können automatisch gewählte Grenzen unruhig machen.")
+    if len(clips) < requested_count:
+        recommendations.append(f"Es wurden nur {len(clips)} von {requested_count} gewünschten eigenständigen Momenten gefunden.")
+    elif average_clip_score >= 75:
+        strengths.append("mehrere starke Highlight-Kandidaten")
+
+    return {
+        "score": score,
+        "label": label,
+        "verdict": verdict,
+        "strengths": strengths[:4],
+        "recommendations": recommendations[:3],
+        "metrics": {
+            "duration_minutes": round(minutes, 1),
+            "words_per_minute": round(words_per_minute),
+            "speech_percent": round(speech_coverage * 100),
+            "scene_changes": len(scene_changes),
+            "scene_changes_per_minute": round(scene_rate, 1),
+            "highlight_candidates": len(clips),
+            "average_clip_score": round(average_clip_score) if clips else 0,
+        },
+    }
+
+
 def write_ass(
     words: Iterable[Word],
     clip: Clip,
@@ -442,10 +533,10 @@ def process_video(
     caption_color: str,
     highlight_color: str,
     progress: Progress,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     output_dir.mkdir(parents=True, exist_ok=True)
     progress(3, "Video wird geprüft")
-    probe_video(video)
+    video_info = probe_video(video)
     audio = output_dir / "audio.wav"
     progress(8, "Tonspur wird vorbereitet")
     extract_audio(video, audio)
@@ -485,6 +576,10 @@ def process_video(
             "start": round(clip.start, 1),
             "reasons": clip.reasons,
         })
+    analysis = analyze_clip_potential(video_info, words, scene_changes, clips, count, min_seconds)
+    (output_dir / "analysis.json").write_text(
+        json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
     progress(100, "Fertig")
-    return results
+    return results, analysis
 

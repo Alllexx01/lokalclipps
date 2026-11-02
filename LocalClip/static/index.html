@@ -35,6 +35,8 @@
     .caption-grid label{color:#9b9fac;font-size:12px;font-weight:700}.caption-grid select,.caption-grid input[type=number]{width:100%;height:42px;margin-top:6px;border:1px solid #292d37;border-radius:10px;background:#151821;color:#fff;padding:0 10px}
     .color-control{display:flex!important;align-items:center;justify-content:space-between;height:42px;margin-top:6px;padding:0 10px;border:1px solid #292d37;border-radius:10px;background:#151821}.color-control input{width:30px;height:28px;border:0;background:none;padding:0}
     .clip-reasons{color:#9b9fac;font-size:12px;line-height:1.45;margin:0 0 14px}
+    .potential-card{display:grid;grid-template-columns:96px 1fr;gap:18px;align-items:center;margin:0 0 18px;padding:18px;border:1px solid #303846;border-radius:16px;background:linear-gradient(135deg,#111923,#171116)}
+    .potential-score{width:82px;height:82px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#38d39f var(--potential),#29303a 0);position:relative;font-size:22px;font-weight:900}.potential-score::before{content:"";position:absolute;inset:7px;border-radius:50%;background:#11151d}.potential-score span{position:relative}.potential-copy h3{margin:0 0 5px;font-size:19px}.potential-copy p{margin:0 0 9px;color:#a7acb7;font-size:13px}.potential-signals{display:flex;flex-wrap:wrap;gap:6px}.potential-signals span{padding:5px 8px;border-radius:999px;background:#1d2830;color:#9fe5cc;font-size:11px}.potential-advice{margin:9px 0 0;padding-left:18px;color:#d7b28a;font-size:12px;line-height:1.5}
     .edit-captions{width:100%;margin-bottom:10px;padding:11px;border:1px solid #4c3f72;border-radius:10px;background:#211a36;color:#d8ccff;font-weight:800;cursor:pointer}
     .tiktok-top,.post-tiktok{border:1px solid #2c6c70;background:linear-gradient(135deg,#102a2d,#211020);color:#fff;font-weight:900;cursor:pointer}.tiktok-top{height:40px;padding:0 14px;border-radius:11px}.post-tiktok{width:100%;margin-bottom:10px;padding:11px;border-radius:10px}.share-clip{width:100%;margin-bottom:10px;padding:12px;border:1px solid #3e597d;border-radius:10px;background:linear-gradient(135deg,#172b46,#261a38);color:#fff;font-weight:900;cursor:pointer}.share-clip:disabled{opacity:.65;cursor:wait}.tiktok-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#737783}.tiktok-dot.online{background:#2ee6a6;box-shadow:0 0 9px #2ee6a6}
     .caption-dialog{width:min(760px,94vw);border:1px solid #353946;border-radius:20px;background:#111319;color:#fff;padding:0;box-shadow:0 30px 100px #000}.caption-dialog::backdrop{background:#05060acc;backdrop-filter:blur(6px)}
@@ -133,6 +135,7 @@
 
     <section class="results hidden" id="resultsPanel">
       <div class="results-heading"><div><p class="eyebrow">FERTIG</p><h2>Deine besten Clips</h2></div><button id="newJob" class="secondary">Neues Video</button></div>
+      <div class="potential-card hidden" id="potentialCard"></div>
       <div class="clip-grid" id="clipGrid"></div>
     </section>
   </main>

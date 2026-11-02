@@ -265,6 +265,7 @@ async def create_job(request):
         "progress": 0,
         "message": "Wartet",
         "clips": [],
+        "analysis": None,
         "created_at": now,
         "updated_at": now,
         "last_accessed_at": now,
@@ -287,7 +288,7 @@ async def create_job(request):
                 finally:
                     if cookie_file:
                         cookie_file.unlink(missing_ok=True)
-            results = process_video(
+            results, analysis = process_video(
                 video=source_video,
                 output_dir=job_dir,
                 progress=lambda percent, message: update_job(job_id, progress=percent, message=message),
@@ -295,7 +296,7 @@ async def create_job(request):
             )
             for item in results:
                 item["url"] = f"/api/jobs/{job_id}/files/{item['filename']}"
-            update_job(job_id, status="done", progress=100, message="Fertig", clips=results)
+            update_job(job_id, status="done", progress=100, message="Fertig", clips=results, analysis=analysis)
         except Exception as exc:
             traceback.print_exc()
             update_job(job_id, status="error", message=str(exc), error=str(exc))

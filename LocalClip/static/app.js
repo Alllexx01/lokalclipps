@@ -10,6 +10,7 @@ const progressBar = document.querySelector('#progressBar');
 const progressPercent = document.querySelector('#progressPercent');
 const progressMessage = document.querySelector('#progressMessage');
 const clipGrid = document.querySelector('#clipGrid');
+const potentialCard = document.querySelector('#potentialCard');
 const recentPanel = document.querySelector('#recentPanel');
 const recentGrid = document.querySelector('#recentGrid');
 const retentionDays = document.querySelector('#retentionDays');
@@ -71,7 +72,7 @@ async function loadRecentJobs() {
       setupPanel.classList.add('hidden');
       recentPanel.classList.add('hidden');
       progressPanel.classList.add('hidden');
-      showResults(job.clips, job.id);
+      showResults(job.clips, job.id, job.analysis);
       resultsPanel.scrollIntoView({behavior:'smooth'});
     }));
   } catch (error) {
@@ -163,7 +164,7 @@ async function poll(id) {
     progressPercent.textContent = `${job.progress || 0} %`;
     progressMessage.textContent = job.message || 'Verarbeitung läuft';
     if (job.status === 'done') {
-      showResults(job.clips, id);
+      showResults(job.clips, id, job.analysis);
       loadRecentJobs();
       return;
     }
@@ -172,11 +173,29 @@ async function poll(id) {
   } catch (error) { showError(error.message); }
 }
 
-function showResults(clips, jobId) {
+function showResults(clips, jobId, analysis = null) {
   currentJobId = jobId;
   recentPanel.classList.add('hidden');
   progressPanel.classList.add('hidden');
   resultsPanel.classList.remove('hidden');
+  if (analysis) {
+    const metrics = analysis.metrics || {};
+    const strengths = (analysis.strengths || []).map(item => `<span>✓ ${escapeHtml(item)}</span>`).join('');
+    const advice = (analysis.recommendations || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    potentialCard.style.setProperty('--potential', `${Math.max(0, Math.min(100, analysis.score || 0))}%`);
+    potentialCard.innerHTML = `
+      <div class="potential-score"><span>${Number(analysis.score || 0)}</span></div>
+      <div class="potential-copy">
+        <h3>${escapeHtml(analysis.label || 'Clip-Potenzial')}</h3>
+        <p>${escapeHtml(analysis.verdict || '')}</p>
+        <div class="potential-signals">${strengths}<span>${Number(metrics.duration_minutes || 0)} Min.</span><span>${Number(metrics.words_per_minute || 0)} Wörter/Min.</span><span>${Number(metrics.scene_changes || 0)} Bildwechsel</span></div>
+        ${advice ? `<ul class="potential-advice">${advice}</ul>` : ''}
+      </div>`;
+    potentialCard.classList.remove('hidden');
+  } else {
+    potentialCard.classList.add('hidden');
+    potentialCard.innerHTML = '';
+  }
   clipGrid.innerHTML = clips.map(clip => `
     <article class="clip-card" data-clip-index="${clip.index}">
       <video controls preload="metadata" src="${clip.url}"></video>

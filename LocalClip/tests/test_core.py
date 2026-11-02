@@ -1,4 +1,4 @@
-from core import Word, _caption_groups, choose_clips
+from core import Clip, Word, _caption_groups, analyze_clip_potential, choose_clips
 
 
 def test_choose_clips_returns_non_overlapping_highlights():
@@ -49,4 +49,19 @@ def test_caption_groups_are_readable_and_split_on_pauses():
     assert [item.text for item in groups[0]] == ["Das", "ist", "ein", "guter", "Test."]
     assert [item.text for item in groups[1]] == ["Neue", "Szene"]
     assert all(len(group) <= 5 for group in groups)
+
+
+def test_clip_potential_distinguishes_strong_and_weak_sources():
+    strong_words = [Word(index * 0.5, index * 0.5 + 0.35, f"wort{index}") for index in range(600)]
+    strong_clips = [Clip(10, 45, 84, "Titel", "Text", ["starker Einstieg"]) for _ in range(5)]
+    strong = analyze_clip_potential(
+        {"duration": 300}, strong_words, [index * 12.0 for index in range(1, 24)], strong_clips, 5, 25,
+    )
+    weak = analyze_clip_potential(
+        {"duration": 600}, [Word(index * 20.0, index * 20.0 + 0.2, "wort") for index in range(10)], [], [], 5, 25,
+    )
+    assert strong["score"] >= 80
+    assert strong["label"] == "Sehr gutes Clip-Potenzial"
+    assert weak["score"] < 45
+    assert weak["label"] == "Eher ungeeignet"
 
