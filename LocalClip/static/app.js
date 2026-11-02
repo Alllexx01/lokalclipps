@@ -272,7 +272,19 @@ form.addEventListener('submit', async e => {
 async function poll(id) {
   try {
     const response = await fetch(`/api/jobs/${id}`);
-    const job = await response.json();
+    const raw = await response.text();
+    let job;
+    try {
+      job = raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      job = null;
+    }
+    if (!job && (!response.ok || !raw)) {
+      progressMessage.textContent = 'Verbindung zum Server wird wiederhergestellt …';
+      setTimeout(() => poll(id), 2000);
+      return;
+    }
+    if (!job) throw new Error('Der Server hat eine unvollständige Antwort gesendet.');
     if (!response.ok) throw new Error(job.error || 'Status konnte nicht geladen werden');
     progressBar.style.width = `${job.progress || 0}%`;
     progressPercent.textContent = `${job.progress || 0} %`;
