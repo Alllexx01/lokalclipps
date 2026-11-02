@@ -356,26 +356,45 @@ def download_video(
         options["cookiefile"] = str(cookie_file)
     elif cookie_browser in {"chrome", "edge", "firefox"}:
         options["cookiesfrombrowser"] = (cookie_browser,)
-    try:
-        with YoutubeDL(options) as downloader:
+    def perform_download(download_options: dict) -> list[Path]:
+        with YoutubeDL(download_options) as downloader:
             info = downloader.extract_info(safe_url, download=True)
             requested = info.get("requested_downloads") or []
-            candidates = [Path(item["filepath"]) for item in requested if item.get("filepath")]
+            found = [Path(item["filepath"]) for item in requested if item.get("filepath")]
             prepared = Path(downloader.prepare_filename(info))
-            candidates.extend([prepared.with_suffix(".mp4"), prepared])
+            found.extend([prepared.with_suffix(".mp4"), prepared])
+            return found
+
+    try:
+        candidates = perform_download(options)
     except DownloadError as exc:
         message = str(exc)
-        if "not a bot" in message.lower() or "sign in to confirm" in message.lower():
+        if "requested format is not available" in message.lower():
+            for partial in (*job_dir.glob("source.*.part"), *job_dir.glob("source.*.ytdl")):
+                partial.unlink(missing_ok=True)
+            fallback_options = dict(options)
+            fallback_options.pop("format", None)  # yt-dlp wählt die beste tatsächlich angebotene Variante
+            progress(1, "Gewünschte Qualität fehlt; verfügbares Bestformat wird geladen")
+            try:
+                candidates = perform_download(fallback_options)
+            except DownloadError as fallback_exc:
+                message = str(fallback_exc)
+            else:
+                message = ""
+        if not message:
+            pass
+        elif "not a bot" in message.lower() or "sign in to confirm" in message.lower():
             raise RuntimeError(
                 "YouTube hat den automatischen Abruf blockiert. Speichere das Video auf deinem "
                 "Handy und wähle es oben über ‚Video auswählen‘ aus – Cookies werden nicht benötigt."
             ) from exc
-        if "cookie" in message.lower() or "decrypt" in message.lower():
+        elif "cookie" in message.lower() or "decrypt" in message.lower():
             raise RuntimeError(
                 "Die Plattform verlangt eine Anmeldung. Speichere dein Video auf dem Handy und "
                 "lade die Videodatei direkt hoch – Zugangsdaten werden nicht benötigt."
             ) from exc
-        raise RuntimeError(f"Der Videodownload ist fehlgeschlagen: {message}") from exc
+        else:
+            raise RuntimeError(f"Der Videodownload ist fehlgeschlagen: {message}") from exc
 
     for candidate in candidates:
         if candidate.is_file():
