@@ -83,6 +83,11 @@ class ServerClient:
         request = self._helper_request(self.server + f"/api/helper/jobs/{job_id}/failed", data)
         self.opener.open(request, timeout=30).close()
 
+    def progress(self, job_id: str, progress: int, message: str) -> None:
+        data = json.dumps({"progress": progress, "message": message}).encode("utf-8")
+        request = self._helper_request(self.server + f"/api/helper/jobs/{job_id}/progress", data)
+        self.opener.open(request, timeout=20).close()
+
     def upload(self, job_id: str, video: Path) -> None:
         parsed = urllib.parse.urlsplit(self.server)
         connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
@@ -98,9 +103,19 @@ class ServerClient:
         connection.putheader("X-Video-Filename", "source" + video.suffix.lower())
         connection.putheader("Cookie", cookie_header)
         connection.endheaders()
+        sent = 0
+        last_report = -1
         with video.open("rb") as source:
             while chunk := source.read(1024 * 1024):
                 connection.send(chunk)
+                sent += len(chunk)
+                report = int(sent / size * 10)
+                if report > last_report:
+                    last_report = report
+                    try:
+                        self.progress(job_id, 10 + report, f"Der PC überträgt das Video ({int(sent / size * 100)} %)")
+                    except Exception:
+                        logging.warning("Upload-Fortschritt konnte nicht gemeldet werden", exc_info=True)
         response = connection.getresponse()
         payload = response.read().decode("utf-8", "replace")
         connection.close()
@@ -112,7 +127,7 @@ class ServerClient:
             raise RuntimeError(f"Upload fehlgeschlagen ({response.status}): {detail}")
 
 
-def download_on_pc(job: dict, destination: Path) -> Path:
+def download_on_pc(job: dict, destination: Path, progress) -> Path:
     errors = []
     browser_order = ["none", "edge", "chrome", "firefox"]
     preferred = os.environ.get("LOCALCLIP_HELPER_BROWSER", "").lower()
@@ -121,7 +136,7 @@ def download_on_pc(job: dict, destination: Path) -> Path:
     for browser in browser_order:
         try:
             logging.info("Download %s mit %s", job["id"], browser)
-            return download_video(job["url"], destination, lambda *_: None, cookie_browser=browser)
+            return download_video(job["url"], destination, progress, cookie_browser=browser)
         except Exception as exc:
             errors.append(f"{browser}: {exc}")
     raise RuntimeError("Download auf dem PC fehlgeschlagen. " + " | ".join(errors))
@@ -173,17 +188,34 @@ def run() -> None:
             if not re.fullmatch(r"[0-9a-f]{12}", job_id):
                 raise RuntimeError("Server lieferte eine ungültige Auftragsnummer.")
             destination = WORK / job_id
-            shutil.rmtree(destination, ignore_errors=True)
-            destination.mkdir(parents=True)
+            destination.mkdir(parents=True, exist_ok=True)
+            completed = sorted(
+                (path for path in destination.glob("source.*") if path.suffix.lower() not in {".part", ".ytdl"}),
+                key=lambda path: path.stat().st_size,
+                reverse=True,
+            )
+            transferred = False
             try:
-                video = download_on_pc(job, destination)
+                last_progress = [-1]
+
+                def report(percent, message):
+                    value = max(1, min(10, int(percent)))
+                    if value != last_progress[0]:
+                        last_progress[0] = value
+                        client.progress(job_id, value, message)
+
+                video = completed[0] if completed else download_on_pc(job, destination, report)
+                if completed:
+                    client.progress(job_id, 10, "Vorhandenes Video wird zum Server übertragen")
                 client.upload(job_id, video)
+                transferred = True
                 logging.info("Auftrag %s übertragen", job_id)
             except Exception as exc:
                 logging.exception("Auftrag %s fehlgeschlagen", job_id)
                 client.fail(job_id, str(exc))
             finally:
-                shutil.rmtree(destination, ignore_errors=True)
+                if transferred:
+                    shutil.rmtree(destination, ignore_errors=True)
         except (urllib.error.URLError, TimeoutError, OSError, RuntimeError) as exc:
             logging.warning("Verbindung wird neu aufgebaut: %s", exc)
             time.sleep(15)

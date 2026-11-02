@@ -83,3 +83,21 @@ def test_helper_can_return_public_video_dates(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert app_module.VIDEO_DATE_CACHE["abcDEF12345"] == 1700000000
     assert "abcDEF12345" not in app_module.METADATA_PENDING
+
+
+def test_helper_reports_download_progress(tmp_path, monkeypatch):
+    app_module = helper_app(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+    job_id = client.post(
+        "/api/jobs", data={"url": "https://www.youtube.com/watch?v=abcDEF12345"},
+    ).json()["job_id"]
+    headers = {"X-LocalClip-Helper": "windows-v1"}
+    client.post("/api/helper/claim", headers=headers)
+    response = client.post(
+        f"/api/helper/jobs/{job_id}/progress",
+        json={"progress": 7, "message": "PC lädt: 70 %"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert app_module.JOBS[job_id]["progress"] == 7
+    assert "70 %" in app_module.JOBS[job_id]["message"]

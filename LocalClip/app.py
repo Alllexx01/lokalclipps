@@ -354,7 +354,7 @@ async def helper_claim(request):
         candidates = []
         for job in JOBS.values():
             status = job.get("status")
-            stale = status == "helper_downloading" and now - float(job.get("helper_claimed_at", 0)) > 3600
+            stale = status == "helper_downloading" and now - float(job.get("helper_claimed_at", 0)) > 600
             if status == "waiting_for_pc" or stale:
                 candidates.append(job)
         claimed = None
@@ -446,6 +446,23 @@ async def helper_failed(request):
     except (TypeError, ValueError):
         detail = "Download auf dem PC fehlgeschlagen."
     update_job(job_id, status="error", message=detail, error=detail)
+    return JSONResponse({"ok": True})
+
+
+async def helper_progress(request):
+    if not PC_HELPER_ENABLED or request.headers.get("x-localclip-helper") != "windows-v1":
+        return JSONResponse({"error": "PC-Helfer ist nicht freigeschaltet."}, status_code=404)
+    job_id = request.path_params["job_id"]
+    job = JOBS.get(job_id)
+    if not job or job.get("status") != "helper_downloading":
+        return JSONResponse({"error": "Dieser Auftrag läuft nicht auf dem PC."}, status_code=409)
+    try:
+        payload = await request.json()
+        progress = max(1, min(20, int(payload.get("progress", 1))))
+        message = str(payload.get("message", "Der PC lädt das Video"))[:160]
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Ungültiger Fortschritt."}, status_code=400)
+    update_job(job_id, progress=progress, message=message, helper_claimed_at=time.time())
     return JSONResponse({"ok": True})
 
 
@@ -740,6 +757,7 @@ routes = [
     Route("/api/helper/metadata", helper_metadata, methods=["POST"]),
     Route("/api/helper/jobs/{job_id}/upload", helper_upload, methods=["POST"]),
     Route("/api/helper/jobs/{job_id}/failed", helper_failed, methods=["POST"]),
+    Route("/api/helper/jobs/{job_id}/progress", helper_progress, methods=["POST"]),
     Route("/api/jobs/{job_id}", job_status),
     Route("/api/jobs/{job_id}/clips/{clip_index}/render", rerender_clip, methods=["POST"]),
     Route("/api/jobs/{job_id}/files/{filename}", job_file),
