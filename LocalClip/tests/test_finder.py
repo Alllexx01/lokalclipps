@@ -44,6 +44,7 @@ def install_fake_ytdlp(monkeypatch, catalog, fail_all=False):
     module.utils = utils
     monkeypatch.setitem(sys.modules, "yt_dlp", module)
     monkeypatch.setitem(sys.modules, "yt_dlp.utils", utils)
+    monkeypatch.setattr(downloader, "video_page_timestamp", lambda _video_id: None)
     return calls
 
 
@@ -131,6 +132,14 @@ def test_search_enriches_missing_age_from_public_channel_feed(monkeypatch):
     assert 8 <= result["age_days"] <= 10
     assert result["published_at"]
     assert "channel_id" not in result
+
+
+def test_search_falls_back_to_public_video_page_date(monkeypatch):
+    install_fake_ytdlp(monkeypatch, {"podcast": [video("older001")]})
+    published = time.time() - 86400 * 800
+    monkeypatch.setattr(downloader, "video_page_timestamp", lambda value: published)
+    result = search_public_videos("", "podcast", 4)[0]
+    assert 799 <= result["age_days"] <= 801
 
 
 def test_video_id_from_url():

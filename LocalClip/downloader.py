@@ -176,6 +176,29 @@ def channel_feed_dates(channel_id: str) -> dict[str, float]:
     return dates
 
 
+@lru_cache(maxsize=512)
+def video_page_timestamp(video_id: str) -> float | None:
+    """Read only the public publication-date metadata from a YouTube watch page."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", video_id):
+        return None
+    request = urllib.request.Request(
+        "https://www.youtube.com/watch?v=" + video_id,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LocalClip/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            page = response.read(2_500_000).decode("utf-8", "ignore")
+    except OSError:
+        return None
+    match = re.search(r'"(?:uploadDate|publishDate)":"(\d{4}-\d{2}-\d{2})(?:T[^"]*)?"', page)
+    if not match:
+        return None
+    try:
+        return datetime.fromisoformat(match.group(1)).timestamp()
+    except ValueError:
+        return None
+
+
 def search_public_videos(
     query: str = "",
     category: str = "all",
@@ -268,6 +291,14 @@ def search_public_videos(
             feeds = dict(zip(missing_channels, pool.map(channel_feed_dates, missing_channels)))
         for item in results:
             timestamp = feeds.get(item["channel_id"], {}).get(item["id"])
+            if item["age_days"] is None and timestamp:
+                item["published_at"], item["age_days"] = video_age({"timestamp": timestamp})
+    missing_videos = [item["id"] for item in results if item["age_days"] is None]
+    if missing_videos:
+        with ThreadPoolExecutor(max_workers=min(6, len(missing_videos))) as pool:
+            page_dates = dict(zip(missing_videos, pool.map(video_page_timestamp, missing_videos)))
+        for item in results:
+            timestamp = page_dates.get(item["id"])
             if item["age_days"] is None and timestamp:
                 item["published_at"], item["age_days"] = video_age({"timestamp": timestamp})
     for item in results:
