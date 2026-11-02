@@ -477,7 +477,7 @@ async def discover_videos(request):
                 for video_id in missing:
                     if video_id not in VIDEO_DATE_CACHE:
                         METADATA_PENDING.setdefault(video_id, 0)
-            deadline = time.time() + 15
+            deadline = time.time() + 45
             while time.time() < deadline:
                 with LOCK:
                     unresolved = [video_id for video_id in missing if video_id not in VIDEO_DATE_CACHE and video_id in METADATA_PENDING]
