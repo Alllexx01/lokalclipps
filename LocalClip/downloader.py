@@ -372,15 +372,25 @@ def download_video(
         if "requested format is not available" in message.lower():
             for partial in (*job_dir.glob("source.*.part"), *job_dir.glob("source.*.ytdl")):
                 partial.unlink(missing_ok=True)
-            fallback_options = dict(options)
-            fallback_options.pop("format", None)  # yt-dlp wählt die beste tatsächlich angebotene Variante
-            progress(1, "Gewünschte Qualität fehlt; verfügbares Bestformat wird geladen")
-            try:
-                candidates = perform_download(fallback_options)
-            except DownloadError as fallback_exc:
-                message = str(fallback_exc)
-            else:
-                message = ""
+            fallback_formats = (
+                "best[height<=1080]/best",
+                "best",
+                "worst",
+            )
+            for fallback_format in fallback_formats:
+                fallback_options = dict(options)
+                fallback_options["format"] = fallback_format
+                progress(1, "Gewünschte Qualität fehlt; verfügbare Videoformate werden geprüft")
+                try:
+                    candidates = perform_download(fallback_options)
+                except DownloadError as fallback_exc:
+                    message = str(fallback_exc)
+                    if "requested format is not available" in message.lower():
+                        continue
+                    break
+                else:
+                    message = ""
+                    break
         if not message:
             pass
         elif "not a bot" in message.lower() or "sign in to confirm" in message.lower():

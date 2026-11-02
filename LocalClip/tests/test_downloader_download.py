@@ -23,7 +23,7 @@ def test_missing_1080p_format_retries_with_ytdlp_default(tmp_path, monkeypatch):
             return False
 
         def extract_info(self, _url, download=True):
-            if "format" in self.options:
+            if self.options.get("format") != "best":
                 raise FakeDownloadError("Requested format is not available")
             target = tmp_path / "source.mp4"
             target.write_bytes(b"video")
@@ -43,5 +43,9 @@ def test_missing_1080p_format_retries_with_ytdlp_default(tmp_path, monkeypatch):
     messages = []
     result = downloader.download_video("https://www.youtube.com/watch?v=abcDEF12345", tmp_path, lambda p, m: messages.append(m))
     assert result == Path(tmp_path / "source.mp4")
-    assert "format" in attempts[0] and "format" not in attempts[1]
-    assert any("Bestformat" in message for message in messages)
+    assert [attempt["format"] for attempt in attempts] == [
+        "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "best[height<=1080]/best",
+        "best",
+    ]
+    assert any("Videoformate" in message for message in messages)
