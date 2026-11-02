@@ -124,6 +124,30 @@ def _diversify(results: list[dict], per_channel: int = 2) -> list[dict]:
     return first + rest
 
 
+def video_age(entry: dict, now: float | None = None) -> tuple[str, int | None]:
+    """Return ISO upload date and age in whole days when the source provides it."""
+    uploaded = None
+    raw_date = str(entry.get("upload_date") or "")
+    if re.fullmatch(r"\d{8}", raw_date):
+        try:
+            uploaded = time.mktime(time.strptime(raw_date, "%Y%m%d"))
+        except (ValueError, OverflowError):
+            pass
+    if uploaded is None:
+        for key in ("timestamp", "release_timestamp"):
+            try:
+                value = float(entry.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                uploaded = value
+                break
+    if uploaded is None:
+        return "", None
+    age_days = max(0, int(((now or time.time()) - uploaded) / 86400))
+    return time.strftime("%Y-%m-%d", time.localtime(uploaded)), age_days
+
+
 def search_public_videos(
     query: str = "",
     category: str = "all",
@@ -191,6 +215,7 @@ def search_public_videos(
         score, reasons = score_entry(entry)
         thumbnails = entry.get("thumbnails") or []
         thumbnail = str((thumbnails[-1] if thumbnails else {}).get("url") or entry.get("thumbnail") or "")
+        published_at, age_days = video_age(entry)
         results.append({
             "id": video_id,
             "title": str(entry.get("title") or "Unbenanntes Video").strip()[:180],
@@ -198,6 +223,8 @@ def search_public_videos(
             "channel": str(entry.get("channel") or entry.get("uploader") or "Unbekannter Kanal")[:100],
             "duration": duration,
             "views": int(entry.get("view_count") or 0),
+            "published_at": published_at,
+            "age_days": age_days,
             "thumbnail": thumbnail,
             "score": score,
             "reasons": reasons,

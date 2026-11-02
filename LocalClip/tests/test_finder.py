@@ -5,7 +5,7 @@ import types
 import pytest
 
 import downloader
-from downloader import score_entry, search_public_videos, video_id_from_url
+from downloader import score_entry, search_public_videos, video_age, video_id_from_url
 
 
 class FakeDownloadError(Exception):
@@ -109,6 +109,15 @@ def test_recent_uploads_get_a_small_boost():
     fresh, reasons = score_entry(video("f", upload_date="20261020"), now=now)
     old, _ = score_entry(video("o", upload_date="20200101"), now=now)
     assert fresh > old and "aktuell" in reasons
+
+
+def test_video_age_accepts_upload_date_and_timestamp():
+    now = time.mktime(time.strptime("20261102", "%Y%m%d"))
+    published, days = video_age({"upload_date": "20261020"}, now=now)
+    assert published == "2026-10-20" and days == 13
+    published, days = video_age({"timestamp": now - 86400 * 400}, now=now)
+    assert published and days == 400
+    assert video_age({}, now=now) == ("", None)
 
 
 def test_video_id_from_url():

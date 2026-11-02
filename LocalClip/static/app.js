@@ -152,12 +152,14 @@ async function runFinder(limit) {
     finderResults.innerHTML = results.map(video => {
       const minutes = video.duration ? `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')} Min.` : 'Länge unbekannt';
       const views = video.views ? `${new Intl.NumberFormat('de-DE', {notation:'compact'}).format(video.views)} Aufrufe` : 'Aufrufe unbekannt';
+      const days = Number.isFinite(Number(video.age_days)) && video.age_days !== null ? Number(video.age_days) : null;
+      const age = days === null ? 'Alter unbekannt' : days < 1 ? 'heute' : days < 7 ? `vor ${days} ${days === 1 ? 'Tag' : 'Tagen'}` : days < 60 ? `vor ${Math.floor(days / 7)} ${Math.floor(days / 7) === 1 ? 'Woche' : 'Wochen'}` : days < 730 ? `vor ${Math.floor(days / 30)} Monaten` : `vor ${Math.floor(days / 365)} Jahren`;
       const attributes = `data-url="${escapeAttribute(video.url)}" data-title="${escapeAttribute(video.title)}"`;
       return `<article class="finder-card${video.already_used ? ' used' : ''}">
         ${video.already_used ? `<span class="finder-used${video.thumbnail ? '' : ' inline'}">Schon geclippt</span>` : ''}
         ${video.thumbnail ? `<img loading="lazy" src="${escapeAttribute(video.thumbnail)}" alt="">` : ''}
         <div class="finder-card-body"><h3>${escapeHtml(video.title)}</h3>
-        <div class="finder-card-meta">${escapeHtml(video.channel)} · ${minutes} · ${views}</div>
+        <div class="finder-card-meta">${escapeHtml(video.channel)} · ${minutes} · ${views} · ${age}</div>
         <div class="finder-score">Finder-Score ${Number(video.score || 0)}</div>
         <p class="finder-reasons">${(video.reasons || []).map(escapeHtml).join(' · ')}</p>
         <div class="finder-actions">
