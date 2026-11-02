@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from downloader import download_video
@@ -67,10 +68,15 @@ class ServerClient:
             headers={"X-LocalClip-Helper": "windows-v1", "Content-Type": content_type},
         )
 
-    def claim(self) -> dict | None:
+    def claim(self) -> dict:
         request = self._helper_request(self.server + "/api/helper/claim")
         with self.opener.open(request, timeout=35) as response:
-            return json.load(response).get("job")
+            return json.load(response)
+
+    def metadata(self, dates: dict[str, float]) -> None:
+        data = json.dumps({"dates": dates}).encode("utf-8")
+        request = self._helper_request(self.server + "/api/helper/metadata", data)
+        self.opener.open(request, timeout=30).close()
 
     def fail(self, job_id: str, message: str) -> None:
         data = json.dumps({"error": message[:500]}).encode("utf-8")
@@ -121,6 +127,26 @@ def download_on_pc(job: dict, destination: Path) -> Path:
     raise RuntimeError("Download auf dem PC fehlgeschlagen. " + " | ".join(errors))
 
 
+def lookup_video_dates(video_ids: list[str]) -> dict[str, float]:
+    from yt_dlp import YoutubeDL
+
+    def lookup(video_id: str) -> tuple[str, float]:
+        try:
+            options = {
+                "quiet": True, "no_warnings": True, "skip_download": True,
+                "ignore_no_formats_error": True, "js_runtimes": {"node": {}},
+            }
+            with YoutubeDL(options) as downloader:
+                info = downloader.extract_info("https://www.youtube.com/watch?v=" + video_id, download=False)
+            return video_id, float(info.get("timestamp") or 0)
+        except Exception:
+            logging.exception("Datum für %s konnte nicht gelesen werden", video_id)
+            return video_id, 0
+
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(video_ids)))) as pool:
+        return {video_id: timestamp for video_id, timestamp in pool.map(lookup, video_ids)}
+
+
 def run() -> None:
     DEPLOY.mkdir(exist_ok=True)
     WORK.mkdir(exist_ok=True)
@@ -135,7 +161,11 @@ def run() -> None:
     logging.info("PC-Helfer gestartet: %s", server)
     while True:
         try:
-            job = client.claim()
+            claimed = client.claim()
+            metadata_ids = list(claimed.get("metadata_ids") or [])
+            if metadata_ids:
+                client.metadata(lookup_video_dates(metadata_ids))
+            job = claimed.get("job")
             if not job:
                 time.sleep(POLL_SECONDS)
                 continue

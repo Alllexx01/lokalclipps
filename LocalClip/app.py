@@ -23,7 +23,7 @@ from starlette.staticfiles import StaticFiles
 
 from core import ZOOM_MODES, Clip, Word, make_hook, process_video, render_short
 from postcopy import build_variants
-from downloader import download_video, search_public_videos, validate_public_video_url, video_id_from_url
+from downloader import download_video, search_public_videos, validate_public_video_url, video_age, video_id_from_url
 from tiktok import TikTokClient, TikTokError, hashtag_packages
 
 
@@ -35,6 +35,9 @@ LOCK = threading.Lock()
 REFRAME_MODES = {"auto", "center", "blur"}   # Sprecher folgen / feste Mitte / ganzes Bild mit unscharfem Hintergrund
 PROCESSING = threading.Semaphore(max(1, int(os.environ.get("LOCALCLIP_MAX_JOBS", "1") or 1)))
 PC_HELPER_ENABLED = os.environ.get("LOCALCLIP_PC_HELPER", "").lower() in {"1", "true", "yes", "on"}
+VIDEO_DATE_CACHE: dict[str, float] = {}
+METADATA_PENDING: dict[str, float] = {}
+HELPER_LAST_SEEN = 0.0
 DEFAULT_SETTINGS = {"retention_days": 3}
 # Im Server-Betrieb liegen TikTok-Zugangsdaten im dauerhaften Datenvolume statt im Container-Image.
 TIKTOK = TikTokClient(DATA if os.environ.get("LOCALCLIP_DATA_DIR") else ROOT)
@@ -338,26 +341,57 @@ async def helper_claim(request):
     """Let the authenticated Windows helper claim one pending YouTube download."""
     if not PC_HELPER_ENABLED or request.headers.get("x-localclip-helper") != "windows-v1":
         return JSONResponse({"error": "PC-Helfer ist nicht freigeschaltet."}, status_code=404)
+    global HELPER_LAST_SEEN
     now = time.time()
     with LOCK:
+        HELPER_LAST_SEEN = now
+        metadata_ids = [
+            video_id for video_id, claimed_at in METADATA_PENDING.items()
+            if video_id not in VIDEO_DATE_CACHE and (not claimed_at or now - claimed_at > 60)
+        ][:24]
+        for video_id in metadata_ids:
+            METADATA_PENDING[video_id] = now
         candidates = []
         for job in JOBS.values():
             status = job.get("status")
             stale = status == "helper_downloading" and now - float(job.get("helper_claimed_at", 0)) > 3600
             if status == "waiting_for_pc" or stale:
                 candidates.append(job)
-        if not candidates:
-            return JSONResponse({"job": None})
-        job = min(candidates, key=lambda item: item.get("created_at", now))
-        job.update(
-            status="helper_downloading",
-            message="Der PC lädt das Video herunter",
-            helper_claimed_at=now,
-            updated_at=now,
-        )
-        save_job(job["id"])
-        claimed = {"id": job["id"], "url": job.get("source_url", ""), "name": job.get("name", "Video")}
-    return JSONResponse({"job": claimed})
+        claimed = None
+        if candidates:
+            job = min(candidates, key=lambda item: item.get("created_at", now))
+            job.update(
+                status="helper_downloading",
+                message="Der PC lädt das Video herunter",
+                helper_claimed_at=now,
+                updated_at=now,
+            )
+            save_job(job["id"])
+            claimed = {"id": job["id"], "url": job.get("source_url", ""), "name": job.get("name", "Video")}
+    return JSONResponse({"job": claimed, "metadata_ids": metadata_ids})
+
+
+async def helper_metadata(request):
+    if not PC_HELPER_ENABLED or request.headers.get("x-localclip-helper") != "windows-v1":
+        return JSONResponse({"error": "PC-Helfer ist nicht freigeschaltet."}, status_code=404)
+    try:
+        dates = (await request.json()).get("dates", {})
+    except (TypeError, ValueError):
+        dates = {}
+    accepted = 0
+    with LOCK:
+        for video_id, raw_timestamp in dates.items():
+            if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(video_id)):
+                continue
+            try:
+                timestamp = float(raw_timestamp or 0)
+            except (TypeError, ValueError):
+                timestamp = 0
+            if timestamp > 0:
+                VIDEO_DATE_CACHE[str(video_id)] = timestamp
+                accepted += 1
+            METADATA_PENDING.pop(str(video_id), None)
+    return JSONResponse({"ok": True, "accepted": accepted})
 
 
 async def helper_upload(request):
@@ -436,6 +470,26 @@ async def discover_videos(request):
         used = {video_id_from_url(job.get("source_url", "")) for job in JOBS.values()} - {""}
         for item in results:
             item["already_used"] = item["id"] in used      # schon einmal geclippt
+        missing = [item["id"] for item in results if item.get("age_days") is None]
+        helper_online = time.time() - HELPER_LAST_SEEN < 25
+        if missing and helper_online:
+            with LOCK:
+                for video_id in missing:
+                    if video_id not in VIDEO_DATE_CACHE:
+                        METADATA_PENDING.setdefault(video_id, 0)
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                with LOCK:
+                    unresolved = [video_id for video_id in missing if video_id not in VIDEO_DATE_CACHE and video_id in METADATA_PENDING]
+                if not unresolved:
+                    break
+                await run_in_threadpool(time.sleep, 0.25)
+        with LOCK:
+            cached_dates = {video_id: VIDEO_DATE_CACHE.get(video_id) for video_id in missing}
+        for item in results:
+            timestamp = cached_dates.get(item["id"])
+            if item.get("age_days") is None and timestamp:
+                item["published_at"], item["age_days"] = video_age({"timestamp": timestamp})
         return JSONResponse({"results": results, "query": query, "category": category, "limit": limit})
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
@@ -683,6 +737,7 @@ routes = [
     Route("/api/discover", discover_videos, methods=["GET"]),
     Route("/api/settings", retention_settings, methods=["GET", "POST"]),
     Route("/api/helper/claim", helper_claim, methods=["POST"]),
+    Route("/api/helper/metadata", helper_metadata, methods=["POST"]),
     Route("/api/helper/jobs/{job_id}/upload", helper_upload, methods=["POST"]),
     Route("/api/helper/jobs/{job_id}/failed", helper_failed, methods=["POST"]),
     Route("/api/jobs/{job_id}", job_status),

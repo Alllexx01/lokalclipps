@@ -67,3 +67,19 @@ def test_helper_can_report_failure(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert app_module.JOBS[job_id]["status"] == "error"
     assert "PC konnte" in app_module.JOBS[job_id]["error"]
+
+
+def test_helper_can_return_public_video_dates(tmp_path, monkeypatch):
+    app_module = helper_app(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+    headers = {"X-LocalClip-Helper": "windows-v1"}
+    with app_module.LOCK:
+        app_module.METADATA_PENDING["abcDEF12345"] = 0
+    claim = client.post("/api/helper/claim", headers=headers).json()
+    assert claim["metadata_ids"] == ["abcDEF12345"]
+    response = client.post(
+        "/api/helper/metadata", json={"dates": {"abcDEF12345": 1700000000}}, headers=headers,
+    )
+    assert response.status_code == 200
+    assert app_module.VIDEO_DATE_CACHE["abcDEF12345"] == 1700000000
+    assert "abcDEF12345" not in app_module.METADATA_PENDING
