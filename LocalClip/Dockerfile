@@ -1,3 +1,5 @@
+FROM denoland/deno:bin-2.9.8 AS deno
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -7,6 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+# YouTube requires a supported JavaScript runtime for yt-dlp's EJS challenge
+# solver.  The slim Python image does not contain one by default.
+COPY --from=deno /deno /usr/local/bin/deno
 
 WORKDIR /app
 COPY requirements.txt ./

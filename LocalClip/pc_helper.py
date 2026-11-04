@@ -149,7 +149,7 @@ def lookup_video_dates(video_ids: list[str]) -> dict[str, float]:
         try:
             options = {
                 "quiet": True, "no_warnings": True, "skip_download": True,
-                "ignore_no_formats_error": True, "js_runtimes": {"node": {}},
+                "ignore_no_formats_error": True, "js_runtimes": {"deno": {}, "node": {}},
             }
             with YoutubeDL(options) as downloader:
                 info = downloader.extract_info("https://www.youtube.com/watch?v=" + video_id, download=False)

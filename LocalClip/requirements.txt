@@ -5,5 +5,5 @@ faster-whisper>=1.2,<2
 numpy>=1.26,<3
 opencv-python-headless>=4.10,<6
 cryptography>=43
-yt-dlp>=2026.10.21
+yt-dlp[default]>=2026.10.21
 

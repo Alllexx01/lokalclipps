@@ -233,7 +233,7 @@ def search_public_videos(
             "no_warnings": True,
             "playlistend": per_query,
             "socket_timeout": 20,
-            "js_runtimes": {"node": {}},
+            "js_runtimes": {"deno": {}, "node": {}},
         }
         try:
             with YoutubeDL(options) as downloader:
@@ -346,7 +346,9 @@ def download_video(
         "noplaylist": True,
         "restrictfilenames": True,
         "progress_hooks": [hook],
-        "js_runtimes": {"node": {}},
+        # Deno is installed in production; Node remains enabled for the Windows
+        # helper and developer machines. yt-dlp ignores unavailable runtimes.
+        "js_runtimes": {"deno": {}, "node": {}},
         "remote_components": {"ejs:github"},
         "quiet": True,
         "no_warnings": True,

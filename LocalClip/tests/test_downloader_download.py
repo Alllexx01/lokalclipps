@@ -48,4 +48,5 @@ def test_missing_1080p_format_retries_with_ytdlp_default(tmp_path, monkeypatch):
         "best[height<=1080]/best",
         "best",
     ]
+    assert attempts[0]["js_runtimes"] == {"deno": {}, "node": {}}
     assert any("Videoformate" in message for message in messages)
