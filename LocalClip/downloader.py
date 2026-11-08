@@ -32,7 +32,7 @@ DISCOVERY_QUERIES = {
     "comedy": ["comedy deutsch lustig", "stand up comedy deutsch", "sketch comedy deutsch"],
 }
 COMPILATION_TERMS = ("compilation", "zusammenschnitt", "best of", "bestof")
-SORT_MODES = {"score", "views", "length"}
+SORT_MODES = {"score", "views", "length", "newest"}
 
 DISCOVERY_HOOKS = {
     "warum", "fehler", "geheimnis", "unglaublich", "wirklich", "beste", "schlimmste",
@@ -206,6 +206,7 @@ def search_public_videos(
     min_minutes: int = 0,
     max_minutes: int = 0,
     sort: str = "score",
+    exact_query: bool = False,
 ) -> list[dict]:
     """Öffentliche YouTube-Suchvorschläge ohne Anmeldung, aus mehreren Suchanfragen gemischt."""
     try:
@@ -222,7 +223,10 @@ def search_public_videos(
     max_seconds = max(0, int(max_minutes)) * 60
     variants = DISCOVERY_QUERIES[category]
     # Mit eigenem Suchbegriff reichen zwei Varianten; ohne Suchbegriff wird breiter gesucht.
-    terms = [f"{clean_query} {variant}".strip() for variant in (variants[:2] if clean_query else variants)]
+    if clean_query and exact_query:
+        terms = [clean_query]
+    else:
+        terms = [f"{clean_query} {variant}".strip() for variant in (variants[:2] if clean_query else variants)]
     per_query = max(6, min(25, math.ceil(limit * 1.6 / len(terms))))
 
     def fetch(search_terms: str) -> list[dict] | None:
@@ -308,6 +312,16 @@ def search_public_videos(
         results.sort(key=lambda item: item["views"], reverse=True)
     elif sort == "length":
         results.sort(key=lambda item: item["duration"], reverse=True)
+    elif sort == "newest":
+        # Unbekannte Veröffentlichungsdaten kommen ans Ende. Bei gleichem Alter
+        # entscheidet der bestehende Eignungs-Score.
+        results.sort(
+            key=lambda item: (
+                item["age_days"] is None,
+                item["age_days"] if item["age_days"] is not None else 10**9,
+                -item["score"],
+            )
+        )
     else:
         results.sort(key=lambda item: item["score"], reverse=True)
         results = _diversify(results)
@@ -320,6 +334,7 @@ def download_video(
     progress,
     cookie_browser: str = "none",
     cookie_file: Path | None = None,
+    max_height: int = 1080,
 ) -> Path:
     try:
         from yt_dlp import YoutubeDL
@@ -339,8 +354,9 @@ def download_video(
         elif status == "finished":
             progress(10, "Download abgeschlossen")
 
+    max_height = max(360, min(1080, int(max_height)))
     options = {
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "format": f"bv*[height<={max_height}]+ba/b[height<={max_height}]/b",
         "outtmpl": str(job_dir / "source.%(ext)s"),
         "merge_output_format": "mp4",
         "noplaylist": True,
@@ -375,7 +391,7 @@ def download_video(
             for partial in (*job_dir.glob("source.*.part"), *job_dir.glob("source.*.ytdl")):
                 partial.unlink(missing_ok=True)
             fallback_formats = (
-                "best[height<=1080]/best",
+                f"best[height<={max_height}]/best",
                 "best",
                 "worst",
             )

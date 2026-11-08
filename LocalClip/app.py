@@ -167,6 +167,14 @@ async def healthcheck(request):
     return JSONResponse({"status": "ok"})
 
 
+async def terms_page(request):
+    return FileResponse(ROOT / "static" / "terms.html")
+
+
+async def privacy_page(request):
+    return FileResponse(ROOT / "static" / "privacy.html")
+
+
 def _session_token(username: str, password: str, expires_at: int) -> str:
     payload = f"{username}:{expires_at}".encode("utf-8")
     signature = hmac.new(password.encode("utf-8"), payload, hashlib.sha256).hexdigest()
@@ -232,7 +240,7 @@ p{{color:#ff9aaf}}
 async def password_protection(request, call_next):
     """Protect the cloud deployment with a long-lived, signed login cookie."""
     password = os.environ.get("LOCALCLIP_PASSWORD", "").strip()
-    if not password or request.url.path in {"/health", "/login"}:
+    if not password or request.url.path in {"/health", "/login", "/terms", "/privacy"}:
         return await call_next(request)
     expected_user = os.environ.get("LOCALCLIP_USERNAME", "alex")
     if _valid_session(request.cookies.get("localclip_session", ""), expected_user, password):
@@ -768,6 +776,8 @@ async def tiktok_publish_status(request):
 routes = [
     Route("/", homepage),
     Route("/health", healthcheck),
+    Route("/terms", terms_page),
+    Route("/privacy", privacy_page),
     Route("/login", login, methods=["GET", "POST"]),
     Route("/api/jobs", recent_jobs, methods=["GET"]),
     Route("/api/jobs", create_job, methods=["POST"]),

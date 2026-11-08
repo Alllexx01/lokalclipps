@@ -89,6 +89,33 @@ kann pro Auftrag eine `cookies.txt` hochgeladen werden. Sie wird ausschließlich
 Alternativ kann die Videodatei direkt über die große Dateiauswahl hochgeladen werden.
 Plattform-Sperren werden nicht umgangen.
 
+### Automatische FitnaCraft-Clips
+
+`auto_fitnacraft.py` sucht ohne Browser-Cookies nach neuen öffentlichen YouTube-Uploads,
+überspringt bereits verarbeitete Video-IDs und rendert daraus automatisch fünf vertikale
+Clips. Standardmäßig werden nur Uploads der letzten zwei Tage berücksichtigt und pro Lauf
+höchstens zwei Videos verarbeitet. Quellen werden auf 720p begrenzt und mit dem schnellen
+lokalen Whisper-Basismodell transkribiert. Der Zustand und die Ergebnisse liegen im ignorierten
+Ordner `data/auto_fitnacraft/`.
+
+```powershell
+python auto_fitnacraft.py --discover-only
+python auto_fitnacraft.py
+python auto_fitnacraft.py --focus "Beef zwischen zwei Spielern und heftige Reaktionen"
+python auto_fitnacraft.py --publish-tiktok
+```
+
+Mit `--publish-tiktok` wird pro verarbeitetem Quellvideo nur der beste Clip über die
+offizielle TikTok Content Posting API veröffentlicht, höchstens zwei Posts pro Lauf.
+Standard ist `PUBLIC_TO_EVERYONE`; wenn das Konto diese Sichtbarkeit nicht anbietet,
+wird nicht auf eine andere Sichtbarkeit zurückgefallen. Publish-IDs werden im Zustand
+gespeichert, damit ein Clip auch nach einem Neustart niemals doppelt übermittelt wird.
+TikTok muss vorher einmal über die vorhandene Einstellungsoberfläche eingerichtet und
+per OAuth verbunden werden.
+
+Es werden ausschließlich öffentlich abrufbare Videos verarbeitet; Anmeldungsschutz oder
+Bot-Prüfungen werden nicht umgangen. Die Verarbeitung setzt die erforderlichen Nutzungsrechte voraus.
+
 ### PC-Helfer für YouTube-Links
 
 Der PC-Helfer ist derzeit deaktiviert (`LOCALCLIP_PC_HELPER=0`). Der Code und die

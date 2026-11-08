@@ -62,6 +62,14 @@ def test_search_merges_queries_and_removes_duplicates(monkeypatch):
     assert sorted(item["id"] for item in results) == ["aaaaaa1", "bbbbbb2", "cccccc3"]
 
 
+def test_exact_query_does_not_append_category_variants(monkeypatch):
+    calls = install_fake_ytdlp(monkeypatch, {"FitnaCraft": [video("fitna001")]})
+    results = search_public_videos("FitnaCraft", "gaming", 12, exact_query=True)
+    assert len(calls) == 1
+    assert calls[0].split(":", 1)[1] == "FitnaCraft"
+    assert [item["id"] for item in results] == ["fitna001"]
+
+
 def test_duration_filter_and_sorting(monkeypatch):
     install_fake_ytdlp(monkeypatch, {"podcast": [
         video("short01", duration=240, views=900_000, channel="A"),
@@ -75,6 +83,16 @@ def test_duration_filter_and_sorting(monkeypatch):
     assert by_views[0]["id"] == "short01"
     by_length = search_public_videos("", "podcast", 12, sort="length")
     assert by_length[0]["id"] == "long001"
+
+
+def test_newest_sort_orders_by_age(monkeypatch):
+    calls = install_fake_ytdlp(monkeypatch, {"podcast": [
+        video("older01", upload_date="20261001"),
+        video("newer01", upload_date="20261101"),
+    ]})
+    results = search_public_videos("", "podcast", 12, sort="newest")
+    assert calls and all(call.startswith("ytsearch") for call in calls)
+    assert [item["id"] for item in results[:2]] == ["newer01", "older01"]
 
 
 def test_one_channel_cannot_fill_the_whole_list(monkeypatch):
