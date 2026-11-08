@@ -17,7 +17,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -175,6 +175,12 @@ async def privacy_page(request):
     return FileResponse(ROOT / "static" / "privacy.html")
 
 
+async def tiktok_site_verification(request):
+    return PlainTextResponse(
+        "tiktok-developers-site-verification=OchnpPlU3Gd9JFoYUNdgDdnGK1cWEybX\n"
+    )
+
+
 def _session_token(username: str, password: str, expires_at: int) -> str:
     payload = f"{username}:{expires_at}".encode("utf-8")
     signature = hmac.new(password.encode("utf-8"), payload, hashlib.sha256).hexdigest()
@@ -240,7 +246,13 @@ p{{color:#ff9aaf}}
 async def password_protection(request, call_next):
     """Protect the cloud deployment with a long-lived, signed login cookie."""
     password = os.environ.get("LOCALCLIP_PASSWORD", "").strip()
-    if not password or request.url.path in {"/health", "/login", "/terms", "/privacy"}:
+    if not password or request.url.path in {
+        "/health",
+        "/login",
+        "/terms",
+        "/privacy",
+        "/tiktokOchnpPlU3Gd9JFoYUNdgDdnGK1cWEybX.txt",
+    }:
         return await call_next(request)
     expected_user = os.environ.get("LOCALCLIP_USERNAME", "alex")
     if _valid_session(request.cookies.get("localclip_session", ""), expected_user, password):
@@ -778,6 +790,7 @@ routes = [
     Route("/health", healthcheck),
     Route("/terms", terms_page),
     Route("/privacy", privacy_page),
+    Route("/tiktokOchnpPlU3Gd9JFoYUNdgDdnGK1cWEybX.txt", tiktok_site_verification),
     Route("/login", login, methods=["GET", "POST"]),
     Route("/api/jobs", recent_jobs, methods=["GET"]),
     Route("/api/jobs", create_job, methods=["POST"]),
